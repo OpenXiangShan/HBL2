@@ -41,6 +41,11 @@ trait HasTLChannelBits { this: Bundle =>
   def fromC = channel(2).asBool
 }
 
+trait HasAMEBits { this: Bundle =>
+  val ameChannel = UInt(4.W)  // Assume 8 channels, additional 1 bit for invalid value.
+  val ameIndex = UInt(5.W)
+}
+
 class MergeTaskBundle(implicit p: Parameters) extends L2Bundle {
   val off = UInt(offsetBits.W)
   val alias = aliasBitsOpt.map(_ => UInt(aliasBitsOpt.get.W)) // color bits in cache-alias issue
@@ -54,11 +59,13 @@ class MergeTaskBundle(implicit p: Parameters) extends L2Bundle {
 class MatrixDataBundle(implicit p: Parameters) extends L2Bundle {
   val sourceId = UInt(5.W)     // tilelink sourceID(32)
   val data = new DSBlock()
+  val channel = UInt(3.W)
 }
 // We generate a Task for every TL request
 // this is the info that flows in Mainpipe
 class TaskBundle(implicit p: Parameters) extends L2Bundle
   with HasTLChannelBits
+  with HasAMEBits
   with HasCHIMsgParameters
   with HasCHIChannelBits {
   val set = UInt(setBits.W)

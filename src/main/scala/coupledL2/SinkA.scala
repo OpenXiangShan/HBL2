@@ -86,6 +86,8 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.replTask := false.B
     task.matrixTask := matrix_key(0)
     task.modify := matrix_key(1)
+    task.ameChannel := a.user.lift(AmeChannelKey).getOrElse("b1000".U)  // "b1000" is default invalid value.
+    task.ameIndex := a.user.lift(AmeIndexKey).getOrElse(0.U)
     task.vaddr.foreach(_ := a.user.lift(VaddrKey).getOrElse(0.U))
     //miss acquire keyword
     task.isKeyword.foreach(_ := a.echo.lift(IsKeywordKey).getOrElse(false.B))
@@ -129,6 +131,8 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.matrixTask := false.B
     task.vaddr.foreach(_ := req.vaddr.getOrElse(0.U))
     task.isKeyword.foreach(_ := false.B)
+    task.ameChannel := 0.U
+    task.ameIndex := 0.U
     task.mergeA := false.B
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
     task
