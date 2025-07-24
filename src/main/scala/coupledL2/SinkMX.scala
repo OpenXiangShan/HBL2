@@ -47,6 +47,11 @@ class SinkMX(implicit p: Parameters) extends L2Module {
   val a = io.a.bits
   val c = io.c.bits
 
+  // Determine out_a.valid:
+  // 1. if a is not a matrix put, flow io.a to out_a
+  // 2. if a is a matrix put, and in_c is not valid, flow io.a to out_c, handled above
+  // 3. if a is a matrix put, and in_c is valid, stall a
+
   // Handle MatrixGet
   when(isMatrixGet(a) && io.a.valid) {
     out_a.bits.opcode := io.a.bits.opcode//Get Or AcquireBlock
@@ -57,6 +62,10 @@ class SinkMX(implicit p: Parameters) extends L2Module {
 
   // Handle MatrixPut
   when(isMatrixPut(a) && io.a.valid) {
+    // By anycase, CoupledL2 cannot accept Put from A channel.
+    // Wait for C channel be spare.
+    out_a.valid := false.B
+
     when(!io.c.valid) {
       // If c is not valid, convert the request to ReleaseData
       out_c.bits.opcode := ReleaseData
@@ -69,7 +78,6 @@ class SinkMX(implicit p: Parameters) extends L2Module {
     //   out_c.bits.user(VaddrKey) := a.address
       out_c.valid := true.B
       out_c.bits.user.lift(MatrixKey).foreach(_ := "b01".U)
-      out_a.valid := false.B
     //   io.a.ready := false.B // Hold the A channel until the C channel is processed
     }
   }
@@ -81,9 +89,8 @@ class SinkMX(implicit p: Parameters) extends L2Module {
   // Handle ready signals
   // io.a.ready := out_a.ready
   io.c.ready := out_c.ready
-
+  // Bypass channel A matrix put to C, but stalled for original C channel requests.
   // TODO: it is not recommended to use input valid to drive input ready,
   // might cause longer path, unfriendly to timing
   io.a.ready := Mux(isMatrixPut(a), io.out_c.ready && !io.c.valid, io.out_a.ready)
-
 }
