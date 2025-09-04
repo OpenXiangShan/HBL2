@@ -39,7 +39,8 @@ class SourceMD(implicit p: Parameters) extends L2Module {
   when (io.d_task.bits.task.opcode === AccessAckData && io.d_task.bits.task.matrixTask) {
     io.toMatrixD.valid := io.d_task.valid
     io.toMatrixD.bits.data := io.d_task.bits.data
-    io.toMatrixD.bits.sourceId := io.d_task.bits.task.sourceId
+    io.toMatrixD.bits.sourceId := io.d_task.bits.task.ameIndex
+    io.toMatrixD.bits.channel := io.d_task.bits.task.ameChannel
     io.toSourceD.valid := false.B
   }.otherwise {
     io.toMatrixD.valid := false.B

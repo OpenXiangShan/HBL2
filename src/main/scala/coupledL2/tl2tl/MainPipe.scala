@@ -213,6 +213,8 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
   ms_task.alias.foreach(_  := req_s3.alias.getOrElse(0.U))
   ms_task.vaddr.foreach(_  := req_s3.vaddr.getOrElse(0.U))
   ms_task.isKeyword.foreach(_ := req_s3.isKeyword.get)  //OrElse(false.B))
+  ms_task.ameChannel       := req_s3.ameChannel
+  ms_task.ameIndex         := req_s3.ameIndex
 
   ms_task.opcode           := req_s3.opcode
   ms_task.param            := req_s3.param

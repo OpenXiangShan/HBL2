@@ -297,6 +297,8 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_grant.set := req.set
     mp_grant.off := req.off
     mp_grant.matrixTask := req.matrixTask
+    mp_grant.ameChannel := req.ameChannel
+    mp_grant.ameIndex := req.ameIndex
     mp_grant.sourceId := req.sourceId
     mp_grant.alias.foreach(_ := 0.U)
     mp_grant.vaddr.foreach(_ := req.vaddr.getOrElse(0.U))

@@ -65,6 +65,16 @@ case class MatrixField(width: Int) extends BundleField[UInt](MatrixKey, Output(U
 case object IsKeywordKey extends ControlKey[Bool]("isKeyword")
 case class IsKeywordField() extends BundleField[Bool](IsKeywordKey, Output(Bool()), _ := false.B)
 
+/**
+  * Carry AME channel info as AME can send requests to different banks from different channels,
+  * but AME channels assume data from the same channel.
+  */
+case object AmeChannelKey extends ControlKey[UInt](name = "AmeChannel")
+case class AmeChannelField() extends BundleField[UInt](AmeChannelKey, Output(UInt(4.W)), _ := 0.U(4.W))
+
+case object AmeIndexKey extends ControlKey[UInt](name = "AmeIndex")
+case class AmeIndexField() extends BundleField[UInt](AmeIndexKey, Output(UInt(5.W)), _ := 0.U(5.W))
+
 case class L2Param(
   name: String = "L2",
   ways: Int = 4,
@@ -88,7 +98,7 @@ case class L2Param(
   reqField: Seq[BundleFieldBase] = Nil,
   respKey: Seq[BundleKeyBase] = Seq(IsHitKey),
   // Manager
-  reqKey: Seq[BundleKeyBase] = Seq(AliasKey, VaddrKey, PrefetchKey, ReqSourceKey, MatrixKey),
+  reqKey: Seq[BundleKeyBase] = Seq(AliasKey, VaddrKey, PrefetchKey, ReqSourceKey, MatrixKey, AmeChannelKey, AmeIndexKey),
   respField: Seq[BundleFieldBase] = Nil,
 
   innerBuf: TLBufferParams = TLBufferParams(),
