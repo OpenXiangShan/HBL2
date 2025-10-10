@@ -43,7 +43,7 @@ trait HasTLChannelBits { this: Bundle =>
 
 trait HasAMEBits { this: Bundle =>
   val ameChannel = UInt(4.W)  // Assume 8 channels, additional 1 bit for invalid value.
-  val ameIndex = UInt(5.W)
+  val ameIndex = UInt(7.W)
 }
 
 class MergeTaskBundle(implicit p: Parameters) extends L2Bundle {
@@ -57,7 +57,7 @@ class MergeTaskBundle(implicit p: Parameters) extends L2Bundle {
   val meta = new MetaEntry()
 }
 class MatrixDataBundle(implicit p: Parameters) extends L2Bundle {
-  val sourceId = UInt(5.W)     // tilelink sourceID(32)
+  val sourceId = UInt(7.W)     // tilelink sourceID (64) + 1 (cover 64)
   val data = new DSBlock()
   val channel = UInt(3.W)
 }

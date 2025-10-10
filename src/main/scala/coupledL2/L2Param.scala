@@ -73,7 +73,7 @@ case object AmeChannelKey extends ControlKey[UInt](name = "AmeChannel")
 case class AmeChannelField() extends BundleField[UInt](AmeChannelKey, Output(UInt(4.W)), _ := 0.U(4.W))
 
 case object AmeIndexKey extends ControlKey[UInt](name = "AmeIndex")
-case class AmeIndexField() extends BundleField[UInt](AmeIndexKey, Output(UInt(5.W)), _ := 0.U(5.W))
+case class AmeIndexField() extends BundleField[UInt](AmeIndexKey, Output(UInt(7.W)), _ := 0.U(7.W))
 
 case class L2Param(
   name: String = "L2",
