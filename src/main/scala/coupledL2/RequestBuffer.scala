@@ -23,7 +23,6 @@ import freechips.rocketchip.tilelink.TLPermissions._
 import chisel3._
 import chisel3.util._
 import coupledL2._
-import coupledL2.prefetch._
 import coupledL2.utils._
 import utility._
 
@@ -87,7 +86,7 @@ class RequestBuffer(flow: Boolean = true, entries: Int = 4)(implicit p: Paramete
       val set = UInt(setBits.W)
     }))
 
-    val hasLatePF = ValidIO(UInt(PfSource.pfSourceBits.W))
+    val hasLatePF = Output(Bool())
     val hasMergeA = Output(Bool())
   })
 
@@ -118,15 +117,10 @@ class RequestBuffer(flow: Boolean = true, entries: Int = 4)(implicit p: Paramete
   def conflictMaskFromA(a: TaskBundle): UInt =
     conflictMask(a) & VecInit(io.mshrInfo.map(_.bits.fromA)).asUInt
 
-  def latePrefetch(a: TaskBundle): (Bool, UInt) = {
-    val matchVec = VecInit(io.mshrInfo.map(s =>
+  def latePrefetch(a: TaskBundle): Bool = VecInit(io.mshrInfo.map(s =>
     s.valid && s.bits.isPrefetch && sameAddr(a, s.bits) && !s.bits.willFree &&
-      a.fromA && (a.opcode === AcquireBlock || a.opcode === AcquirePerm)
-    ))
-    val matched = matchVec.asUInt.orR
-    val matchSrc = ParallelPriorityMux(matchVec, io.mshrInfo.map(_.bits.meta.prefetchSrc.getOrElse(PfSource.NoWhere.id.U)))
-    (matched, matchSrc)
-  }
+    a.fromA && (a.opcode === AcquireBlock || a.opcode === AcquirePerm)
+  )).asUInt.orR
 
   def latePut(a: TaskBundle): Bool = {
     VecInit(io.mshrInfo.map(s =>
@@ -182,9 +176,7 @@ class RequestBuffer(flow: Boolean = true, entries: Int = 4)(implicit p: Paramete
   val canFlow =flow.B && !full && !conflict(in) && !chosenQValid && !Cat(io.mainPipeBlock).orR && !noFreeWay(in)
 
   val doFlow  = canFlow && io.out.ready
-  val latePrefetchRes = latePrefetch(in)
-  io.hasLatePF.valid := latePrefetchRes._1 && io.in.valid && !sameAddr(in, RegNext(in))
-  io.hasLatePF.bits := latePrefetchRes._2
+  io.hasLatePF := latePrefetch(in) && io.in.valid && !sameAddr(in, RegNext(in))
   io.hasMergeA := mergeA && io.in.valid && !sameAddr(in, RegNext(in))
 
   //  val depMask    = buffer.map(e => e.valid && sameAddr(io.in.bits, e.task))

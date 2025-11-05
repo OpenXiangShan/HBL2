@@ -137,11 +137,11 @@ class TL2CHICoupledL2(implicit p: Parameters) extends CoupledL2Base {
 
         // TXRSP
         val txrsp = Wire(DecoupledIO(new CHIRSP))
-        fastArb(slices.map(_.io.out.tx.rsp), txrsp, Some("txrsp"))
+        arb(slices.map(_.io.out.tx.rsp), txrsp, Some("txrsp"))
 
         // TXDAT
         val txdat = Wire(DecoupledIO(new CHIDAT))
-        fastArb(slices.map(_.io.out.tx.dat) :+ mmio.io.tx.dat, txdat, Some("txdat"))
+        arb(slices.map(_.io.out.tx.dat) :+ mmio.io.tx.dat, txdat, Some("txdat"))
 
         // RXSNP
         val rxsnp = Wire(DecoupledIO(new CHISNP))
