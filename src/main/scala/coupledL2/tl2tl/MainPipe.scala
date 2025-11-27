@@ -394,8 +394,7 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
     accessed = meta_s3.accessed,
     tagErr = Mux(wen_c, req_s3.denied, meta_s3.tagErr),
     dataErr = Mux(wen_c, req_s3.corrupt, meta_s3.dataErr), // update error when write DS
-    // TMP:TODO: just let Matrix C be kept in L2 Cache, ideally the last Put will clear rmw
-    rmw = meta_s3.rmw, // Mux(req_s3.matrixTask, false.B, meta_s3.rmw),
+    rmw = Mux(req_s3.matrixTask, false.B, meta_s3.rmw),
     probed = meta_s3.probed
   )
   // use merge_meta if mergeA
