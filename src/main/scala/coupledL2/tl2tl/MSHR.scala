@@ -157,7 +157,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
       !state.s_pprobe,
       req.param,
       Mux(
-        req_get && dirResult.hit && meta.state === TRUNK,
+        req_get && dirResult.hit && meta.state === TRUNK && !req_needT,
         toB,
         toN
       )
