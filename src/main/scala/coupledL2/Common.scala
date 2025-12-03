@@ -57,7 +57,9 @@ class MergeTaskBundle(implicit p: Parameters) extends L2Bundle {
   val meta = new MetaEntry()
 }
 class MatrixDataBundle(implicit p: Parameters) extends L2Bundle {
-  val sourceId = UInt(7.W)     // tilelink sourceID (64) + 1 (cover 64)
+  //val sourceId = UInt(7.W)     // tilelink sourceID (64) + 1 (cover 64)
+  // Carry real TL sourceId width so matrix consumers can map responses back correctly.
+  val sourceId = UInt(sourceIdBits.W)
   val data = new DSBlock()
   val channel = UInt(3.W)
 }

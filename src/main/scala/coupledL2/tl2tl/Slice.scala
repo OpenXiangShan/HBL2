@@ -27,7 +27,7 @@ import coupledL2._
 import coupledL2.utils._
 import coupledL2.debug._
 import coupledL2.prefetch.PrefetchIO
-import utility.{RegNextN, XSPerfHistogram}
+import utility.{RegNextN, XSPerfHistogram, XSPerfAccumulate}
 
 class OuterBundle(params: TLBundleParameters) extends TLBundle(params) with BaseOuterBundle
 
@@ -217,6 +217,57 @@ class Slice()(implicit p: Parameters) extends BaseSlice[OuterBundle] {
     XSPerfHistogram("a_to_d_delay", delay, delay_sample, 20, 300, 10, true, true)
     XSPerfHistogram("a_to_d_delay", delay, delay_sample, 300, 500, 20, true, true)
     XSPerfHistogram("a_to_d_delay", delay, delay_sample, 500, 1000, 100, true, false)
+
+    def PERF_CHN[T <: TLChannel](clientName: String, chn: DecoupledIO[T]) = {
+      val channelName = chn.bits match {
+        case _: TLBundleA => "A"
+        case _: TLBundleB => "B"
+        case _: TLBundleC => "C"
+        case _: TLBundleD => "D"
+        case _: TLBundleE => "E"
+      }
+      XSPerfAccumulate(s"${clientName}_${channelName}_fire", chn.fire)
+      XSPerfAccumulate(s"${clientName}_${channelName}_stall", chn.valid && !chn.ready)
+
+      val ops = chn.bits match {
+        case _: TLBundleA => TLMessages.a.map(_._1)
+        case _: TLBundleB => TLMessages.b.map(_._1)
+        case _: TLBundleC => TLMessages.c.map(_._1)
+        case _: TLBundleD => TLMessages.d.map(_._1)
+        case _: TLBundleE => Nil
+      }
+
+      for((op_raw, i) <- ops.zipWithIndex){
+        val op = s"${op_raw}".replaceAll(" ", "_")
+        chn.bits match {
+          case a: TLBundleA =>
+            XSPerfAccumulate(s"${clientName}_${channelName}_${op}_fire", i.U === a.opcode && chn.fire)
+            XSPerfAccumulate(s"${clientName}_${channelName}_${op}_stall", i.U === a.opcode && chn.valid && !chn.ready)
+          case b: TLBundleB =>
+            XSPerfAccumulate(s"${clientName}_${channelName}_${op}_fire", i.U === b.opcode && chn.fire)
+            XSPerfAccumulate(s"${clientName}_${channelName}_${op}_stall", i.U === b.opcode && chn.valid && !chn.ready)
+          case c: TLBundleC =>
+            XSPerfAccumulate(s"${clientName}_${channelName}_${op}_fire", i.U === c.opcode && chn.fire)
+            XSPerfAccumulate(s"${clientName}_${channelName}_${op}_stall", i.U === c.opcode && chn.valid && !chn.ready)
+          case d: TLBundleD =>
+            XSPerfAccumulate(s"${clientName}_${channelName}_${op}_fire", i.U === d.opcode && chn.fire)
+            XSPerfAccumulate(s"${clientName}_${channelName}_${op}_stall", i.U === d.opcode && chn.valid && !chn.ready)
+          case _: TLBundleE =>
+        }
+      }
+    }
+
+    PERF_CHN(s"${cacheParams.name}_In", io.in.a)
+    PERF_CHN(s"${cacheParams.name}_In", io.in.b)
+    PERF_CHN(s"${cacheParams.name}_In", io.in.c)
+    PERF_CHN(s"${cacheParams.name}_In", io.in.d)
+    PERF_CHN(s"${cacheParams.name}_In", io.in.e)
+
+    PERF_CHN(s"${cacheParams.name}_Out", io.out.a)
+    PERF_CHN(s"${cacheParams.name}_Out", io.out.b)
+    PERF_CHN(s"${cacheParams.name}_Out", io.out.c)
+    PERF_CHN(s"${cacheParams.name}_Out", io.out.d)
+    PERF_CHN(s"${cacheParams.name}_Out", io.out.e)
   }
 
   val monitor = Module(new Monitor())

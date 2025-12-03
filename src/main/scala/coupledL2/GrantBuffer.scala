@@ -197,7 +197,7 @@ class GrantBuffer(implicit p: Parameters) extends L2Module {
     io.d.valid := false.B
     io.d.bits := DontCare // not used
     io.matrixDataOut.valid := deqValid
-    io.matrixDataOut.bits.sourceId := deqTask.ameIndex
+    io.matrixDataOut.bits.sourceId := deqTask.sourceId
     io.matrixDataOut.bits.channel := deqTask.ameChannel
     io.matrixDataOut.bits.data := deqData.asTypeOf(new DSBlock) // TODO:check
   }.otherwise {

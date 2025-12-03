@@ -731,6 +731,7 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
 
   XSPerfAccumulate("b_req_hit", hit_s3 && req_s3.fromB)
   XSPerfAccumulate("b_req_miss", miss_s3 && req_s3.fromB)
+  XSPerfAccumulate("rmw_probe_count", task_s3.valid && sinkB_req_s3 && dirResult_s3.hit && meta_s3.rmw)
 
   XSPerfHistogram("a_req_access_way", perfCnt = dirResult_s3.way,
     enable = task_s3.valid && !mshr_req_s3 && req_s3.fromA, start = 0, stop = cacheParams.ways, step = 1)
@@ -770,6 +771,14 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
   }
 
   XSPerfAccumulate("early_prefetch", meta_s3.prefetch.getOrElse(false.B) && !meta_s3.accessed && !dirResult_s3.hit && task_s3.valid)
+
+  // pipeline efficiency
+  val s1_is_getput = io.taskInfo_s1.valid && io.taskInfo_s1.bits.fromA && (
+  io.taskInfo_s1.bits.opcode === TLMessages.Get ||
+  io.taskInfo_s1.bits.opcode === TLMessages.PutFullData ||
+  io.taskInfo_s1.bits.opcode === TLMessages.PutPartialData)
+  val pipe_input_blocked = resetFinish && s1_is_getput && !io.taskFromArb_s2.valid
+  XSPerfAccumulate("mainpipe_input_block_getput", pipe_input_blocked)
 
   /* ===== Monitor ===== */
   io.toMonitor.task_s2 := task_s2

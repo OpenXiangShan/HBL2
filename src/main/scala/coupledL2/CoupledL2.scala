@@ -117,7 +117,7 @@ trait HasCoupledL2Parameters {
   def bankBits = p(BankBitsKey)
 
   def clientBits = edgeIn.client.clients.count(_.supports.probe)
-  def sourceIdBits = edgeIn.bundle.sourceBits // ids of L1
+  def sourceIdBits = p.lift(EdgeInKey).map(_.bundle.sourceBits).getOrElse(7) // ids of L1
   def msgSizeBits = edgeIn.bundle.sizeBits
   def sourceIdAll = 1 << sourceIdBits //FIXME Maybe Bug
 
