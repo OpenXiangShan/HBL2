@@ -46,6 +46,27 @@ trait HasAMEBits { this: Bundle =>
   val ameIndex = UInt(7.W)
 }
 
+// matrix info from Bus
+object MatrixInfo {
+  def width = 3
+  def A: UInt = "b001".U(width.W)
+  def B: UInt = "b010".U(width.W)
+  def C: UInt = "b100".U(width.W)
+
+  def isMatrix(m: UInt): Bool = m.orR
+  def isRMW(m: UInt): Bool = m === C
+}
+
+// matrix info in TaskBundle
+trait HasMatrixType {
+  val matrixType = UInt(3.W)
+  def isMatrix = matrixType.orR
+  def isA = matrixType(0).asBool
+  def isB = matrixType(1).asBool
+  def isC = matrixType(2).asBool
+  def isAB = !isC
+}
+
 class MergeTaskBundle(implicit p: Parameters) extends L2Bundle {
   val off = UInt(offsetBits.W)
   val alias = aliasBitsOpt.map(_ => UInt(aliasBitsOpt.get.W)) // color bits in cache-alias issue

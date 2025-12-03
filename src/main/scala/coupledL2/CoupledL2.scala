@@ -229,7 +229,7 @@ trait HasCoupledL2Parameters {
   }
 
   def doEvict(meta: MetaEntry): Bool = {
-    // TODO: now for all branches without client
+    // AI-TODO: now for all branches without client
     !(meta.state === MetaData.INVALID || (meta.state === MetaData.BRANCH && !meta.clients.orR))
   }
 

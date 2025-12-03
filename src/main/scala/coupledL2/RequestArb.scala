@@ -226,9 +226,14 @@ class RequestArb(implicit p: Parameters) extends L2Module
     task_s2.bits.opcode === Release ||
     task_s2.bits.opcode === ReleaseData
   })
+
+  val putWrite = task_s2.bits.fromA && task_s2.bits.matrixTask && task_s2.bits.opcode === ReleaseAck
+
   io.refillBufRead_s2.valid := mshrTask_s2 && (
     releaseRefillData ||
-    mshrTask_s2_a_upwards && !task_s2.bits.useProbeData)
+    mshrTask_s2_a_upwards && !task_s2.bits.useProbeData ||
+    putWrite
+  )
   io.refillBufRead_s2.bits.id := task_s2.bits.mshrId
 
   // ReleaseData and ProbeAckData read releaseBuffer
@@ -258,11 +263,6 @@ class RequestArb(implicit p: Parameters) extends L2Module
     task_s2.bits.readProbeDataDown || mshrTask_s2_a_upwards && task_s2.bits.useProbeData,
     snpHitReleaseNeedData
   )
-  // chnl_task_s1.bits.opcode === PutFullData
-  // task_s2
-  when(chnl_task_s1.bits.opcode === PutFullData){
-    // printf(s"TODO: Requires RequestArb to support PutFullData!\n")
-  }
   io.releaseBufRead_s2.bits.id := Mux(
     task_s2.bits.snpHitRelease,
     task_s2.bits.snpHitReleaseIdx,

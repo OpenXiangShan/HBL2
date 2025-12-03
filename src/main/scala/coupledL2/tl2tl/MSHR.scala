@@ -101,6 +101,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
   val req_acquire = req.opcode === AcquireBlock && req.fromA || req.opcode === AcquirePerm // AcquireBlock and Probe share the same opcode
   val req_acquirePerm = req.opcode === AcquirePerm
   val req_get = req.opcode === Get
+  val req_put = req.opcode === PutFullData // AI-TODO: add PutPartial
   val req_prefetch = req.opcode === Hint
 
   val promoteT_normal =  dirResult.hit && meta_no_client && meta.state === TIP
@@ -214,7 +215,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_release.mergeA := false.B
     mp_release.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
     mp_release.txChannel := 0.U
-    mp_release.matrixTask := meta.probed
+    mp_release.matrixTask := req.matrixTask // meta.probed //AI-TODO: consider how to assign this
     mp_release
   }
 
@@ -305,7 +306,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_grant.isKeyword.foreach(_ := req.isKeyword.getOrElse(false.B))
     mp_grant.opcode := odOpGen(req.opcode)
     mp_grant.param := Mux(
-      req_get || req_prefetch,
+      req_get || req_put || req_prefetch,
       0.U, // Get -> AccessAckData
       MuxLookup( // Acquire -> Grant
         req.param,
@@ -337,10 +338,10 @@ class MSHR(implicit p: Parameters) extends L2Module {
         !(dirResult.meta.state === BRANCH && req_needT) 
       )
     mp_grant.readProbeDataDown := false.B
-    mp_grant.dirty := false.B
+    mp_grant.dirty := req_put
 
     mp_grant.meta := MetaEntry(
-      dirty = gotDirty || dirResult.hit && (meta.dirty || probeDirty),
+      dirty = gotDirty || req_put || dirResult.hit && (meta.dirty || probeDirty),
       state = Mux(
         req_get,
         Mux( // Get
@@ -348,30 +349,30 @@ class MSHR(implicit p: Parameters) extends L2Module {
           Mux(isT(meta.state), TIP, BRANCH),
           Mux(req_promoteT || req_needT, TIP, BRANCH) // rmw Get of Matrix C needs T
         ),
-        Mux( // Acquire
+        Mux( // Put & Acquire
           req_promoteT || req_needT,
-          Mux(req_prefetch, TIP, TRUNK),
+          Mux(req_put || req_prefetch, TIP, TRUNK),
           BRANCH
         )
       ),
       clients = Mux(
         req_prefetch,
         Mux(dirResult.hit, meta.clients, Fill(clientBits, false.B)),
-        Fill(clientBits, !(req_get && (!dirResult.hit || meta_no_client || probeGotN)))
+        Fill(clientBits, !(req_put || req_get && (!dirResult.hit || meta_no_client || probeGotN)))
       ),
       alias = Some(aliasFinal),
       prefetch = req_prefetch || dirResult.hit && meta_pft,
       pfsrc = PfSource.fromMemReqSource(req.reqSource),
       accessed = req_acquire || req_get,
       rmw = req.modify,
-      probed = false.B
+      probed = meta.probed
     )
     mp_grant.metaWen := true.B
     mp_grant.tagWen := !dirResult.hit
-    mp_grant.dsWen := gotGrantData || probeDirty && (req_get || req.aliasTask.getOrElse(false.B))
+    mp_grant.dsWen := gotGrantData || probeDirty && (req_get || req.aliasTask.getOrElse(false.B)) || (req_put && !dirResult.hit)
     mp_grant.fromL2pft.foreach(_ := req.fromL2pft.get)
     mp_grant.needHint.foreach(_ := false.B)
-    mp_grant.replTask := !dirResult.hit // Get and Alias are hit that does not need replacement
+    mp_grant.replTask := !req_put && !dirResult.hit // Get and Alias are hit that does not need replacement
     mp_grant.wayMask := 0.U(cacheParams.ways.W)
     mp_grant.mshrRetry := !state.s_retry
     mp_grant.reqSource := 0.U(MemReqSource.reqSourceBits.W)
@@ -473,6 +474,10 @@ class MSHR(implicit p: Parameters) extends L2Module {
     }
     when (isToN(c_resp.bits.param)) {
       probeGotN := true.B
+    }
+    when (req_put && !dirResult.hit) { // for replacement-cased probe, exclude hit
+      state.s_release := false.B
+      state.w_releaseack := false.B
     }
   }
 

@@ -40,7 +40,8 @@ object MetaData {
     !opcode(2) ||
     (opcode === TLMessages.Hint && param === TLHints.PREFETCH_WRITE) ||
     ((opcode === TLMessages.AcquireBlock || opcode === TLMessages.AcquirePerm) && param =/= TLPermissions.NtoB) ||
-    (opcode === TLMessages.Get && param === TLPermissions.NtoT)
+    (opcode === TLMessages.Get && param === TLPermissions.NtoT) ||
+    (opcode === TLMessages.PutFullData || opcode === TLMessages.PutPartialData)
   }
   // Does a request prove the client need not be probed?
   def skipProbeN(opcode: UInt): Bool = {

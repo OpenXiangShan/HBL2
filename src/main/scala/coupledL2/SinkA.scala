@@ -36,7 +36,7 @@ class SinkA(implicit p: Parameters) extends L2Module {
   })
   assert(!(io.a.valid && (io.a.bits.opcode === PutFullData ||
                           io.a.bits.opcode === PutPartialData)),
-    "no Put");
+    "no Put through SinkA!");
 
   // flush L2 all control defines
   val set = Option.when(cacheParams.enableL2Flush)(RegInit(0.U(setBits.W))) 
@@ -52,7 +52,7 @@ class SinkA(implicit p: Parameters) extends L2Module {
   io.cmoAll.foreach { cmoAll => cmoAll.cmoAllBlock := cmoAllBlock }
 
   def fromTLAtoTaskBundle(a: TLBundleA): TaskBundle = {
-    val matrix_key = a.user.lift(MatrixKey).getOrElse(0.U)
+    val matrixKey = a.user.lift(MatrixKey).getOrElse(0.U)
     val task = Wire(new TaskBundle)
     task := 0.U.asTypeOf(new TaskBundle)
     task.channel := "b001".U
@@ -84,8 +84,8 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.wayMask := 0.U(cacheParams.ways.W)
     task.reqSource := a.user.lift(utility.ReqSourceKey).getOrElse(MemReqSource.NoWhere.id.U)
     task.replTask := false.B
-    task.matrixTask := matrix_key(0)
-    task.modify := matrix_key(1)
+    task.matrixTask := MatrixInfo.isMatrix(matrixKey)
+    task.modify := MatrixInfo.isRMW(matrixKey)
     task.ameChannel := a.user.lift(AmeChannelKey).getOrElse("b1000".U)  // "b1000" is default invalid value.
     task.ameIndex := a.user.lift(AmeIndexKey).getOrElse(0.U)
     task.vaddr.foreach(_ := a.user.lift(VaddrKey).getOrElse(0.U))
@@ -128,7 +128,8 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.wayMask := 0.U(cacheParams.ways.W)
     task.reqSource := req.pfSource
     task.replTask := false.B
-    task.matrixTask := false.B
+    task.matrixTask := false.B //TODO: prefetch matrix later
+    task.modify := false.B
     task.vaddr.foreach(_ := req.vaddr.getOrElse(0.U))
     task.isKeyword.foreach(_ := false.B)
     task.ameChannel := 0.U

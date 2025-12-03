@@ -65,9 +65,11 @@ class SinkC(implicit p: Parameters) extends L2Module {
   val nextPtrReg = RegEnable(nextPtr, 0.U.asTypeOf(nextPtr), io.c.fire && isRelease && first && hasData)
 
   def toTaskBundle(c: TLBundleC): TaskBundle = {
+    val matrixKey = c.user.lift(MatrixKey).getOrElse(false.B).orR
+    val isMatrix = MatrixInfo.isMatrix(matrixKey)
     val task = Wire(new TaskBundle)
     task := 0.U.asTypeOf(new TaskBundle)
-    task.channel := "b100".U
+    task.channel := Mux(!isMatrix, "b100".U, "b001".U)
     task.txChannel := 0.U
     task.tag := parseAddress(c.address)._1
     task.set := parseAddress(c.address)._2
@@ -75,7 +77,7 @@ class SinkC(implicit p: Parameters) extends L2Module {
     task.alias.foreach(_ := 0.U)
     task.vaddr.foreach(_ := 0.U)
     task.isKeyword.foreach(_ := false.B)
-    task.opcode := c.opcode
+    task.opcode := Mux(!isMatrix, c.opcode, PutFullData) //AI-TODO: Put Partial
     task.param := c.param
     task.size := c.size
     task.sourceId := c.source
@@ -99,12 +101,13 @@ class SinkC(implicit p: Parameters) extends L2Module {
     task.wayMask := Fill(cacheParams.ways, "b1".U)
     task.reqSource := MemReqSource.NoWhere.id.U // Ignore
     task.replTask := false.B
-    task.matrixTask := c.user.lift(MatrixKey).getOrElse(false.B)(0) // only Put will set MatrixKey
-    task.modify := false.B
+    task.matrixTask := MatrixInfo.isMatrix(matrixKey)
+    task.modify := MatrixInfo.isRMW(matrixKey)
     task.mergeA := false.B
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
     task
   }
+  assert(!(io.c.valid && (io.c.bits.opcode === PutPartialData)), "PutPartial Not Supported")
 
   when (io.c.fire && isRelease) {
     when (hasData) {
