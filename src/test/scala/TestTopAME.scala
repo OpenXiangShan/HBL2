@@ -93,7 +93,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
             // supportsPutPartial = TransferSizes(1,cacheParams.blockBytes),
             // requestFields = MatrixField
             )),
-            requestFields = Seq(MatrixField(2))
+            requestFields = Seq(MatrixField(2), AmeIndexField())
         )
       ))
     }
