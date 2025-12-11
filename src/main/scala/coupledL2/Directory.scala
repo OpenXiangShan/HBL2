@@ -40,16 +40,16 @@ class MetaEntry(implicit p: Parameters) extends L2Bundle {
   // **** for matrix use ****
   // 1)read-modify-write data, or Get-Put, used for Matrix C.
   //   We desire to keep them in L2 after Get until Put.
-  // 2)probed means the block is Probed between Get and Put. (call for a better naming)
+  // 2)loacl means the block is only present in the local cache, and not in the lower cache
   //   Since L3 thinks it is no longer in L2, we should use L2 Put/WriteFull to write new data to L3 at Release.
   //
-  // Cat(probed, rmw):
+  // Cat(rmw, local) to record probe behavior of RMW blocks:
   // - 2'b00: normal block
-  // - 2'b01: rmw block after Get, untouched
+  // - 2'b10: rmw block after Get, untouched
   // - 2'b11: rmw block after Get, and probed
-  // - 2'b10: rmw block after Put, once probed.
+  // - 2'b01: rmw block after Put, once probed.
   val rmw = Bool()
-  val probed = Bool()
+  val local = Bool()
 
   def =/=(entry: MetaEntry): Bool = {
     this.asUInt =/= entry.asUInt
@@ -64,7 +64,7 @@ object MetaEntry {
   def apply(dirty: Bool, state: UInt, clients: UInt, alias: Option[UInt], prefetch: Bool = false.B,
             pfsrc: UInt = PfSource.NoWhere.id.U, accessed: Bool = false.B,
             tagErr: Bool = false.B, dataErr: Bool = false.B,
-            rmw: Bool = false.B, probed: Bool = false.B
+            rmw: Bool = false.B, local: Bool = false.B
   )(implicit p: Parameters) = {
     val entry = Wire(new MetaEntry)
     entry.dirty := dirty
@@ -77,7 +77,7 @@ object MetaEntry {
     entry.tagErr := tagErr
     entry.dataErr := dataErr
     entry.rmw := rmw
-    entry.probed := probed
+    entry.local := local
     entry
   }
 }

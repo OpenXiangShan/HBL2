@@ -393,7 +393,7 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
     tagErr = meta_s3.tagErr,
     dataErr = meta_s3.dataErr,
     rmw = false.B,
-    probed = meta_s3.probed
+    local = meta_s3.local
   )
   val metaW_s3_b = Mux(req_s3.param === toN, MetaEntry(),
     MetaEntry(
@@ -415,7 +415,7 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
     tagErr = Mux(wen_c, req_s3.denied, meta_s3.tagErr),
     dataErr = Mux(wen_c, req_s3.corrupt, meta_s3.dataErr), // update error when write DS
     rmw = false.B, // AI: should not receive Release during read-modify-write
-    probed = meta_s3.probed
+    local = meta_s3.local
   )
   // AI-TODO: move this to Monitor.scala
   // should not receive Release during read-modify-write
@@ -436,17 +436,17 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
     dataErr = Mux(wen_c, req_s3.corrupt, meta_s3.dataErr),
     // TMP: AI-TODO: put will clear rmw
     rmw = Mux(req_s3.matrixTask, false.B, meta_s3.rmw),
-    probed = meta_s3.probed
+    local = meta_s3.local
   )
 
   val metaW_s3_rmw = MetaEntry(
     meta_s3.dirty, TIP, Fill(clientBits,false.B), meta_s3.alias,
     accessed = true.B, tagErr = meta_s3.tagErr, dataErr = meta_s3.dataErr,
-    rmw = true.B, probed = meta_s3.probed
+    rmw = true.B, local = meta_s3.local
   )
 
   val metaW_s3_probed = WireInit(meta_s3)
-  metaW_s3_probed.probed := true.B
+  metaW_s3_probed.local := true.B
 
   val metaW_way = Mux(mshr_refill_s3 && req_s3.replTask, io.replResp.bits.way, // grant always use replResp way
     Mux(mshr_req_s3, req_s3.way, dirResult_s3.way))

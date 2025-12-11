@@ -365,7 +365,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
       pfsrc = PfSource.fromMemReqSource(req.reqSource),
       accessed = req_acquire || req_get,
       rmw = req.modify,
-      probed = meta.probed
+      local = meta.local
     )
     mp_grant.metaWen := true.B
     mp_grant.tagWen := !dirResult.hit
