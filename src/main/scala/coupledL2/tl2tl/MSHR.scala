@@ -208,7 +208,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_release.metaWen := false.B
     mp_release.meta := MetaEntry()
     mp_release.tagWen := false.B
-    mp_release.dsWen := true.B // write refillData to DS
+    mp_release.dsWen := !req_put // write refillData to DS, except for Put
     mp_release.replTask := true.B
     mp_release.wayMask := 0.U(cacheParams.ways.W)
     mp_release.reqSource := 0.U(MemReqSource.reqSourceBits.W)
@@ -365,7 +365,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
       pfsrc = PfSource.fromMemReqSource(req.reqSource),
       accessed = req_acquire || req_get,
       rmw = req.modify,
-      local = meta.local
+      local = meta.local || req_put && !dirResult.hit
     )
     mp_grant.metaWen := true.B
     mp_grant.tagWen := !dirResult.hit

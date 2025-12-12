@@ -122,11 +122,6 @@ class RequestBuffer(flow: Boolean = true, entries: Int = 4)(implicit p: Paramete
     a.fromA && (a.opcode === AcquireBlock || a.opcode === AcquirePerm)
   )).asUInt.orR
 
-  def latePut(a: TaskBundle): Bool = {
-    VecInit(io.mshrInfo.map(s =>
-      a.fromA && (a.opcode === PutFullData || a.opcode === PutPartialData)
-    )).asUInt.orR
-  }
   // count ways
 //  def countWaysOH(cond: (MSHRInfo => Bool)): UInt = {
 //    VecInit(io.mshrInfo.map(s =>
