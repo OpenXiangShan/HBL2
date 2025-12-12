@@ -174,9 +174,13 @@ class Slice()(implicit p: Parameters) extends BaseSlice[OuterBundle] {
   io.matrixDataOut <> grantBuf.io.matrixDataOut
 
   /* connect downward channels */
-  io.out.a <> outBuf.a(mshrCtl.io.sourceA)
+  val sourceMX = Module(new SourceMX)
+  // feed internal A/C sources into SourceMX, then drive external outputs from SourceMX
+  sourceMX.io.a <> mshrCtl.io.sourceA
+  sourceMX.io.c <> sourceC.io.out
+  io.out.a <> outBuf.a(sourceMX.io.out_a)
+  io.out.c <> outBuf.c(sourceMX.io.out_c)
   sinkB.io.b <> outBuf.b(io.out.b)
-  io.out.c <> outBuf.c(sourceC.io.out)
   refillUnit.io.sinkD <> outBuf.d(io.out.d)
   io.out.e <> outBuf.e(refillUnit.io.sourceE)
 

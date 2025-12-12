@@ -215,7 +215,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_release.mergeA := false.B
     mp_release.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
     mp_release.txChannel := 0.U
-    mp_release.matrixTask := req.matrixTask // meta.probed //AI-TODO: consider how to assign this
+    mp_release.matrixTask := meta.local //AI-TODO: consider how to assign this, check
     mp_release
   }
 
