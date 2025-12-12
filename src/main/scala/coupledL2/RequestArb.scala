@@ -227,7 +227,7 @@ class RequestArb(implicit p: Parameters) extends L2Module
     task_s2.bits.opcode === ReleaseData
   })
 
-  val putWrite = task_s2.bits.fromA && task_s2.bits.matrixTask && task_s2.bits.opcode === ReleaseAck
+  val putWrite = task_s2.bits.fromA && task_s2.bits.matrixTask && task_s2.bits.opcode === AccessAck
 
   io.refillBufRead_s2.valid := mshrTask_s2 && (
     releaseRefillData ||
