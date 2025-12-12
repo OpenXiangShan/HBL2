@@ -65,7 +65,7 @@ class SinkC(implicit p: Parameters) extends L2Module {
   val nextPtrReg = RegEnable(nextPtr, 0.U.asTypeOf(nextPtr), io.c.fire && isRelease && first && hasData)
 
   def toTaskBundle(c: TLBundleC): TaskBundle = {
-    val matrixKey = c.user.lift(MatrixKey).getOrElse(false.B).orR
+    val matrixKey = c.user.lift(MatrixKey).getOrElse(false.B)
     val isMatrix = MatrixInfo.isMatrix(matrixKey)
     val task = Wire(new TaskBundle)
     task := 0.U.asTypeOf(new TaskBundle)
@@ -101,7 +101,7 @@ class SinkC(implicit p: Parameters) extends L2Module {
     task.wayMask := Fill(cacheParams.ways, "b1".U)
     task.reqSource := MemReqSource.NoWhere.id.U // Ignore
     task.replTask := false.B
-    task.matrixTask := MatrixInfo.isMatrix(matrixKey)
+    task.matrixTask := isMatrix
     task.modify := MatrixInfo.isRMW(matrixKey)
     task.mergeA := false.B
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)

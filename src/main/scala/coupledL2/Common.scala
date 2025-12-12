@@ -48,13 +48,19 @@ trait HasAMEBits { this: Bundle =>
 
 // matrix info from Bus
 object MatrixInfo {
-  def width = 3
-  def A: UInt = "b001".U(width.W)
-  def B: UInt = "b010".U(width.W)
-  def C: UInt = "b100".U(width.W)
+//  TODO: distinguish A, B, C
+//  def width = 3
+//  def A: UInt = "b001".U(width.W)
+//  def B: UInt = "b010".U(width.W)
+//  def C: UInt = "b100".U(width.W)
+//
+//  def isMatrix(m: UInt): Bool = m.orR
+//  def isRMW(m: UInt): Bool = m === C
 
-  def isMatrix(m: UInt): Bool = m.orR
-  def isRMW(m: UInt): Bool = m === C
+    // for now, matrixKey(0) is matrix flag, matrixKey(1) is RMW flag
+    def width = 2
+    def isMatrix(m: UInt): Bool = m(0)
+    def isRMW(m: UInt): Bool = m(1)
 }
 
 // matrix info in TaskBundle
