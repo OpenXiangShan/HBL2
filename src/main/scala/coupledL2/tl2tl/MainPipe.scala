@@ -158,6 +158,7 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
 
   val mshr_grant_s3         = mshr_req_s3 && req_s3.fromA && (req_s3.opcode === Grant || req_s3.opcode === GrantData) // Grant or GrantData from mshr
   val mshr_grantdata_s3     = mshr_req_s3 && req_s3.fromA && req_s3.opcode === GrantData
+  val mshr_accessack_s3     = mshr_req_s3 && req_s3.fromA && req_s3.opcode === AccessAck
   val mshr_accessackdata_s3 = mshr_req_s3 && req_s3.fromA && req_s3.opcode === AccessAckData
   val mshr_hintack_s3       = mshr_req_s3 && req_s3.fromA && req_s3.opcode === HintAck
   val mshr_probeack_s3      = mshr_req_s3 && req_s3.fromB && (req_s3.opcode === ProbeAck || req_s3.opcode === ProbeAckData) // ProbeAck or ProbeAckData from mshr
@@ -173,7 +174,7 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
   val cache_alias           = req_acquire_s3 && dirResult_s3.hit && meta_s3.clients(0) &&
                               meta_s3.alias.getOrElse(0.U) =/= req_s3.alias.getOrElse(0.U)
 
-  val mshr_refill_s3 = (mshr_accessackdata_s3 || mshr_hintack_s3 || mshr_grant_s3) // needs refill to L2 DS
+  val mshr_refill_s3 = (mshr_accessackdata_s3 || mshr_hintack_s3 || mshr_grant_s3 || mshr_accessack_s3) // needs refill to L2 DS
   val retry = io.replResp.bits.retry
   val need_repl = doEvict(io.replResp.bits.meta) && req_s3.replTask // Grant needs replacement
 
