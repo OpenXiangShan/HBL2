@@ -711,6 +711,10 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
     alloc_state.s_refill := false.B
     // AI-TODO: need new state machine?
 
+    when(put_sends_release_s3) {
+      alloc_state.w_releaseack := false.B
+    }
+
     when(need_probe_s3_a || need_release_for_put && meta_has_clients_s3) {
       alloc_state.s_rprobe := false.B
       alloc_state.w_rprobeackfirst := false.B

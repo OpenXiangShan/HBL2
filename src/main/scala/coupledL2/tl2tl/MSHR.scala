@@ -475,7 +475,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
     when (isToN(c_resp.bits.param)) {
       probeGotN := true.B
     }
-    when (req_put && !dirResult.hit) { // for replacement-cased probe, exclude hit
+    when (req_put && !dirResult.hit) { // replacement for Put, we release after rProbe
       state.s_release := false.B
       state.w_releaseack := false.B
     }
