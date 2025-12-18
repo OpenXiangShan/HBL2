@@ -277,6 +277,8 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
   when(put_sends_release_s3) {
     sink_resp_s3.bits.opcode := ReleaseData
     sink_resp_s3.bits.param  := Mux(isT(meta_s3.state), TtoN, BtoN)
+    sink_resp_s3.bits.tag    := dirResult_s3.tag
+    sink_resp_s3.bits.matrixTask := Mux(meta_s3.local, true.B, false.B)
   }.elsewhen(req_s3.fromA) {
     sink_resp_s3.bits.opcode := odOpGen(req_s3.opcode)
     sink_resp_s3.bits.param  := Mux(
