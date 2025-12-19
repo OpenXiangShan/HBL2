@@ -550,7 +550,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
   io.status.bits.set := req.set
   io.status.bits.reqTag := req.tag
   io.status.bits.metaTag := dirResult.tag
-  io.status.bits.expectProbeAck := releaseNotSent
+  io.status.bits.expectProbeAck := !state.w_rprobeacklast
   // wait for resps, high as valid
   io.status.bits.w_c_resp := !state.w_rprobeacklast || !state.w_pprobeacklast
   io.status.bits.w_d_resp := !state.w_grantlast || !state.w_grant || !state.w_releaseack
