@@ -269,7 +269,9 @@ class Directory(implicit p: Parameters) extends L2Module {
   // data with rmw flag should be kept in L2 after read until write comes
   // so we should avoid these ways at allocation
   // TODO! WARNING: restrict rmw ways to avoid deadlock
-  val rmwVec = VecInit(metaAll_s3.map(_.rmw)).asUInt // TODO: Vec or Cat
+  val rmwVecRaw = VecInit(metaAll_s3.map(_.rmw)).asUInt
+  // if rmwVec is all valid, we choose a random way, or we can just let it not function
+  val rmwVec = Mux(rmwVecRaw === Fill(ways, 1.U), 0.U(ways.W), rmwVecRaw)
 
   /* ====== refill retry ====== */
   // when refill, ways that have not finished writing its refillData back to DS (in MSHR Release),
