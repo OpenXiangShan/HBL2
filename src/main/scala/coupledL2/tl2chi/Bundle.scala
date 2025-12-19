@@ -49,7 +49,7 @@ class MSHRStatus(implicit p: Parameters) extends TL2CHIL2Bundle
   val set         = UInt(setBits.W)
   val reqTag      = UInt(tagBits.W)
   val metaTag     = UInt(tagBits.W)
-  val needsRepl = Bool()
+  val expectProbeAck = Bool()
   val w_c_resp = Bool()
   val w_d_resp = Bool()
   val will_free = Bool()

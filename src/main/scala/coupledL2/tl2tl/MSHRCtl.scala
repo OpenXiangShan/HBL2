@@ -115,7 +115,7 @@ class MSHRCtl(implicit p: Parameters) extends L2Module with HasPerfEvents {
 
   val resp_sinkC_match_vec = mshrs.map { mshr =>
     val status = mshr.io.status.bits
-    val tag = Mux(status.needsRepl, status.metaTag, status.reqTag)
+    val tag = Mux(status.expectProbeAck, status.metaTag, status.reqTag)
     mshr.io.status.valid && status.w_c_resp && io.resps.sinkC.set === status.set && io.resps.sinkC.tag === tag
   }
 
