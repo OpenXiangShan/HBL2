@@ -185,11 +185,10 @@ class TaskBundle(implicit p: Parameters) extends L2Bundle
   val allowRetry = chiOpt.map(_ => Bool())
   val memAttr = chiOpt.map(_ => new MemAttr)
   val traceTag = chiOpt.map(_ => Bool())
-  val dataCheckErr = chiOpt.map(_ => Bool())
 
   def toCHIREQBundle(): CHIREQ = {
     val req = WireInit(0.U.asTypeOf(new CHIREQ()))
-    req.qos := Fill(QOS_WIDTH, 1.U(1.W)) // TODO
+    req.qos := Fill(QOS_WIDTH, 1.U(1.W)) - 1.U // TODO
     req.tgtID := tgtID.getOrElse(0.U)
     req.srcID := srcID.getOrElse(0.U)
     req.txnID := txnID.getOrElse(0.U)
@@ -294,7 +293,6 @@ class RespInfoBundle(implicit p: Parameters) extends L2Bundle
   val pCrdType = chiOpt.map(_ => UInt(PCRDTYPE_WIDTH.W))
   val respErr = chiOpt.map(_ => UInt(RESPERR_WIDTH.W))
   val traceTag = chiOpt.map(_ => Bool())
-  val dataCheckErr = chiOpt.map(_ => Bool())
 }
 
 class RespBundle(implicit p: Parameters) extends L2Bundle {
@@ -387,6 +385,7 @@ class PrefetchCtrlFromCore extends Bundle {
   val l2_pbop_en = Bool()
   val l2_vbop_en = Bool()
   val l2_tp_en = Bool()
+  val l2_pf_delay_latency = UInt(10.W)
 }
 
 class PrefetchRecv extends Bundle {

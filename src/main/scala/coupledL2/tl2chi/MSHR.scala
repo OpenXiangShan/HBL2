@@ -110,7 +110,6 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
   val tagErr = RegInit(false.B) // L2 Tag Error
   val denied = RegInit(false.B)
   val corrupt = RegInit(false.B)
-  val dataCheckErr = RegInit(false.B)
   val cbWrDataTraceTag = RegInit(false.B)
   val metaChi = ParallelLookUp(
     Cat(meta.dirty, meta.state),
@@ -148,7 +147,6 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     tagErr := io.alloc.bits.dirResult.hit && (io.alloc.bits.dirResult.meta.tagErr || io.alloc.bits.dirResult.error)
     denied := false.B
     corrupt := false.B
-    dataCheckErr := false.B
     cbWrDataTraceTag := false.B
 
     retryTimes := 0.U
@@ -208,7 +206,8 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     req_chiOpcode === SnpUnique ||
     req_chiOpcode === SnpUniqueStash ||
     req_chiOpcode === SnpCleanShared ||
-    req_chiOpcode === SnpCleanInvalid
+    req_chiOpcode === SnpCleanInvalid ||
+    req_chiOpcode === SnpPreferUnique
   )
   // *NOTICE: Careful on future implementation of adding 'isSnpToNFwd' into condition
   //          'doRespData_retToSrc_fwd'. For now, 'isSnpToNFwd' only covers SnpUniqueFwd,
@@ -325,7 +324,8 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     req_chiOpcode === SnpUnique ||
     req_chiOpcode === SnpUniqueStash ||
     req_chiOpcode === SnpCleanShared ||
-    req_chiOpcode === SnpCleanInvalid
+    req_chiOpcode === SnpCleanInvalid ||
+    req_chiOpcode === SnpPreferUnique
   ) || hitWriteDirty && isSnpOnceFwd(req_chiOpcode)
   val fwdCacheState = Mux(tagErr, I, Mux(
     isSnpToBFwd(req_chiOpcode),
@@ -361,7 +361,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
   val a_task = {
     val oa = io.tasks.txreq.bits
     oa := 0.U.asTypeOf(io.tasks.txreq.bits.cloneType)
-    oa.qos := Fill(QOS_WIDTH, 1.U(1.W)) // TODO
+    oa.qos := Fill(QOS_WIDTH, 1.U(1.W)) - 1.U // TODO
     oa.tgtID := Mux(!state.s_reissue.getOrElse(false.B), srcid_retryack, 0.U)
     oa.srcID := 0.U
     oa.txnID := io.id
@@ -485,7 +485,9 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     mp_release.metaWen := false.B
     mp_release.meta := MetaEntry()
     mp_release.tagWen := false.B
-    mp_release.dsWen := true.B // write refillData to DS on refill, write releaseData to DS on CMO
+    // write refillData to DS on refill, write releaseData to DS on CMO
+    // When refillBuf has no valid data, it should be avoided to write data of RefillBuf to DS which is MCP2
+    mp_release.dsWen := !req_acquirePerm
     mp_release.replTask := true.B
     mp_release.cmoTask := cmo_cbo
     mp_release.wayMask := 0.U(cacheParams.ways.W)
@@ -796,7 +798,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     mp_grant.dsWen := (gotGrantData || probeDirty && (req_get || req.aliasTask.getOrElse(false.B))) && !denied
     mp_grant.fromL2pft.foreach(_ := req.fromL2pft.get)
     mp_grant.needHint.foreach(_ := false.B)
-    mp_grant.replTask := !dirResult.hit && !state.w_replResp
+    mp_grant.replTask := !dirResult.hit && !state.w_replResp && !denied
     mp_grant.cmoTask := cmo_cbo
     mp_grant.wayMask := 0.U(cacheParams.ways.W)
     mp_grant.mshrRetry := !state.s_retry
@@ -835,9 +837,6 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
       prefetch = false.B,
       accessed = true.B
     )
-
-    // CHI
-    mp_grant.dataCheckErr.get := dataCheckErr
 
     mp_grant
   }
@@ -1146,12 +1145,12 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
         beatCnt := beatCnt + 1.U
         state.w_grantfirst := true.B
         state.w_grantlast := state.w_grantfirst && beatCnt === (beatSize - 1).U
+        state.w_replResp := state.w_replResp || nderr
         gotT := rxdatIsU || rxdatIsU_PD
         gotDirty := gotDirty || rxdatIsU_PD
         gotGrantData := true.B
         denied := denied || nderr
         corrupt := corrupt || derr || nderr || rxdatCorrupt
-        dataCheckErr := dataCheckErr || rxdat.bits.dataCheckErr.getOrElse(false.B)
       }
     }
 
@@ -1160,6 +1159,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
       state.w_grantfirst := true.B
       state.w_grantlast := state.w_grantfirst
       state.w_grant := true.B
+      state.w_replResp := state.w_replResp || nderr
       gotT := rxdatIsU || rxdatIsU_PD
       gotDirty := gotDirty || rxdatIsU_PD
       gotGrantData := true.B
@@ -1169,7 +1169,6 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
       tgtid_rcompack := rxdat.bits.homeNID.getOrElse(0.U)
       denied := denied || nderr
       corrupt := corrupt || derr || nderr || rxdatCorrupt
-      dataCheckErr := dataCheckErr || rxdat.bits.dataCheckErr.getOrElse(false.B)
       req.traceTag.get := req.traceTag.get || rxdat.bits.traceTag.getOrElse(false.B)
     }
   }
@@ -1180,6 +1179,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     ifAfterIssueC {
       when (rxrsp.bits.chiOpcode.get === RespSepData) {
         state.w_grant := true.B
+        state.w_replResp := state.w_replResp || nderr
         // The TgtID of CompAck is set to the same value as the SrcID of the read response.
         tgtid_rcompack := rxrsp.bits.srcID.getOrElse(0.U)
         // The TxnID of CompAck is set to the unique DBID value generated by the Home.
