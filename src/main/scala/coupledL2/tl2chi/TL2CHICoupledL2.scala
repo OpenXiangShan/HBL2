@@ -137,11 +137,11 @@ class TL2CHICoupledL2(implicit p: Parameters) extends CoupledL2Base {
 
         // TXRSP
         val txrsp = Wire(DecoupledIO(new CHIRSP))
-        arb(slices.map(_.io.out.tx.rsp), txrsp, Some("txrsp"))
+        fastArb(slices.map(_.io.out.tx.rsp), txrsp, Some("txrsp"))
 
         // TXDAT
         val txdat = Wire(DecoupledIO(new CHIDAT))
-        arb(slices.map(_.io.out.tx.dat) :+ mmio.io.tx.dat, txdat, Some("txdat"))
+        fastArb(slices.map(_.io.out.tx.dat) :+ mmio.io.tx.dat, txdat, Some("txdat"))
 
         // RXSNP
         val rxsnp = Wire(DecoupledIO(new CHISNP))
@@ -201,8 +201,8 @@ class TL2CHICoupledL2(implicit p: Parameters) extends CoupledL2Base {
 
         // PCredit receive
         val pCrdGrantValid_s1 = RegNext(isPCrdGrant)
-        val pCrdGrantType_s1 = RegEnable(rxrsp.bits.pCrdType, isPCrdGrant)
-        val pCrdGrantSrcID_s1 = RegEnable(rxrsp.bits.srcID, isPCrdGrant)
+        val pCrdGrantType_s1 = RegNext(rxrsp.bits.pCrdType)
+        val pCrdGrantSrcID_s1 = RegNext(rxrsp.bits.srcID)
 
         pCrdQueue.io.enq.valid := pCrdGrantValid_s1
         pCrdQueue.io.enq.bits.pCrdType := pCrdGrantType_s1
@@ -248,12 +248,14 @@ class TL2CHICoupledL2(implicit p: Parameters) extends CoupledL2Base {
         )
 
         val linkMonitor = Module(new LinkMonitor)
+        val rxdatPipe = Pipeline(linkMonitor.io.in.rx.dat)
+        val rxrspPipe = Pipeline(linkMonitor.io.in.rx.rsp)
         linkMonitor.io.in.tx.req <> txreq
         linkMonitor.io.in.tx.rsp <> txrsp
         linkMonitor.io.in.tx.dat <> txdat
         rxsnp <> linkMonitor.io.in.rx.snp
-        rxrsp <> linkMonitor.io.in.rx.rsp
-        rxdat <> linkMonitor.io.in.rx.dat
+        rxrsp <> rxrspPipe
+        rxdat <> rxdatPipe
         io_chi <> linkMonitor.io.out
         linkMonitor.io.nodeID := io_nodeID
         /* exit coherency when: l2 flush of all slices is done and core is in WFI state */
