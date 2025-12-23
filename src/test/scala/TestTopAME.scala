@@ -102,12 +102,17 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
   val c_nodes = Seq(l1d)
   val l1i_nodes = Seq(l1i)
 
+  val l2_sets = 512
+  val l2_ways = 8
+  val l3_sets = 8192
+  val l3_ways = 16
+
   // 2MB L2 Cache with 8 banks
   val l2 = LazyModule(new TL2TLCoupledL2()(baseConfig(1).alter((site, here, up) => {
     case L2ParamKey => L2Param(
       name = s"l2",
-      ways = 8,
-      sets = 512,
+      ways = l2_ways,
+      sets = l2_sets,
       channelBytes        = TLChannelBeatBytes(32),
       blockBytes          = 64,
       clientCaches = Seq(L1Param(aliasBitsOpt = Some(2), vaddrBitsOpt = Some(16))),
@@ -121,7 +126,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
       enableTagECC = false, //XS use true
       enableDataECC = false, //XS use true
       enableMCP2 = false,
-      // enablePerf = false,
+      enableRollingDB = false,
       // dataCheck = Some("oddparity"),
     )
     // case huancun.BankBitsKey => log2Ceil(8)
@@ -144,14 +149,14 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
     case HCCacheParamsKey => HCCacheParameters(
       name = "l3",
       level = 3,
-      ways = 16,
-      sets = 8192,
+      ways = l3_ways,
+      sets = l3_sets,
       inclusive = false,
       clientCaches = Seq(
         CacheParameters(
           name = s"l2",
-          sets = 512 * 8, // since L2 has 8 slices
-          ways = 8 + 2,   // l2 ways + 2
+          sets = l2_sets * l2_banks,
+          ways = l2_ways + 2,
           blockGranularity = log2Ceil(128)
         ),
       ),
