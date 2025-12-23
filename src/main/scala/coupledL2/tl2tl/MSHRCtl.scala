@@ -141,7 +141,7 @@ class MSHRCtl(implicit p: Parameters) extends L2Module with HasPerfEvents {
       m.io.aMergeTask.bits := io.aMergeTask.bits.task
   }
 
-  io.toReqArb.blockC_s1 := false.B
+  io.toReqArb.blockC_s1 := a_mshrFull // notice: this is only used for A-Put through sinkC
   io.toReqArb.blockB_s1 := mshrFull   // conflict logic in SinkB
   io.toReqArb.blockA_s1 := a_mshrFull // conflict logic in ReqBuf
   io.toReqArb.blockG_s1 := false.B
