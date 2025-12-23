@@ -178,8 +178,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
 
   val l2bankBinders = BankBinder(l2_banks, 64)
   val l3bankBinders = BankBinder(l3_banks, 64)
-  val ram = LazyModule(new TLRAM(AddressSet(0, 0xff_ffffL), beatBytes = 32))
-
+  val ram = LazyModule(new TLRAM(AddressSet(0, 0xffff_ffffL), beatBytes = 32))
 
   c_nodes.zipWithIndex map{ case(c,i) =>
         l1xbar := TLBuffer() := TLLogger(s"L2_L1D[${i}]", true) := c
