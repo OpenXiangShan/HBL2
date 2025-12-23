@@ -102,10 +102,10 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
   val c_nodes = Seq(l1d)
   val l1i_nodes = Seq(l1i)
 
-  val l2_sets = 512
+  val l2_sets = 128 // standard 512
   val l2_ways = 8
-  val l3_sets = 8192
-  val l3_ways = 16
+  val l3_sets = 512 // standard 8192
+  val l3_ways = 8 // standard 16
 
   // 2MB L2 Cache with 8 banks
   val l2 = LazyModule(new TL2TLCoupledL2()(baseConfig(1).alter((site, here, up) => {
@@ -270,7 +270,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
    */
 
 object TestTop_L2L3_AME extends App {
-  val l2_banks=8
+  val l2_banks=2
   val l3_banks=2
   val m_num=l2_banks
 
