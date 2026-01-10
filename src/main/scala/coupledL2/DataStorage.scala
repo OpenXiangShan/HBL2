@@ -119,7 +119,7 @@ class DataStorage(implicit p: Parameters) extends L2Module {
   // s3 read, s4 pass and s5 to destination
   // (if not MCP2, then we need to latch at s4)
   io.rdata := {if(enableMCP2) dataRead else RegNext(dataRead)}
-  io.error := error
+  io.error := {if(enableMCP2) error else RegNext(error)}
 
   if (enableMCP2) {
     assert(!io.en || !RegNext(io.en, false.B),
