@@ -138,19 +138,26 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
     task
   }
+
+  // add Reg at io.a for timing
+  // TODO: may leave one req at this Reg at the time of switching to CMO? needs verification
+  val aValidReg = RegEnable(io.a.valid, false.B, io.a.ready)
+  val aBitsReg = RegEnable(io.a.bits, 0.U.asTypeOf(new TLBundleA(edgeIn.bundle)), io.a.fire)
+
+  io.a.ready := (io.task.ready || !aValidReg) && !cmoAllBlock
+
   if (prefetchOpt.nonEmpty) {
-    io.task.valid := io.a.valid && !cmoAllBlock || io.prefetchReq.get.valid || cmoAllValid
+    // TODO: latch for prefetch reqs as well (check the timing report whether this is critical path?)
+    io.task.valid := aValidReg && !cmoAllBlock || io.prefetchReq.get.valid || cmoAllValid
     io.task.bits := Mux(
-      io.a.valid || cmoAllValid,
-      fromTLAtoTaskBundle(io.a.bits),
+      aValidReg || cmoAllValid,
+      fromTLAtoTaskBundle(aBitsReg),
       fromPrefetchReqtoTaskBundle(io.prefetchReq.get.bits
     ))
-    io.a.ready := io.task.ready && !cmoAllBlock
     io.prefetchReq.get.ready := io.task.ready && !io.a.valid
   } else {
-    io.task.valid := io.a.valid && !cmoAllBlock || cmoAllValid
-    io.task.bits := fromTLAtoTaskBundle(io.a.bits) 
-    io.a.ready := io.task.ready && !cmoAllBlock
+    io.task.valid := aValidReg && !cmoAllBlock || cmoAllValid
+    io.task.bits := fromTLAtoTaskBundle(aBitsReg)
   }
 
   /*
