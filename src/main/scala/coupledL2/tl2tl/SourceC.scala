@@ -144,6 +144,7 @@ class SourceC(implicit p: Parameters) extends L2Module {
   queue.io.enq.bits := io.in.bits.task
   io.in.ready := queue.io.enq.ready
   val enqData = io.in.bits.data.asTypeOf(Vec(beatSize, new DSBeat))
+  // TODO: for Release and ProbeAck without data, queueData enq is not needed
   queueData0.io.enq.valid := io.in.valid
   queueData0.io.enq.bits := enqData(0)
   queueData1.io.enq.valid := io.in.valid
@@ -214,7 +215,7 @@ class SourceC(implicit p: Parameters) extends L2Module {
   io.out.valid := taskValid
   io.out.bits := toTLBundleC(taskR.task, taskR.task.matrixTask, beat)
 
-  val hasData = io.out.bits.opcode(0)
+  val hasData = io.out.bits.opcode(0) || io.out.bits.opcode === TLMessages.PutFullData
   when (io.out.fire) {
     when (hasData) {
       beatValids := VecInit(next_beatsOH.asBools)
