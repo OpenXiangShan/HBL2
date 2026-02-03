@@ -364,7 +364,6 @@ class MSHR(implicit p: Parameters) extends L2Module {
       prefetch = req_prefetch || dirResult.hit && meta_pft,
       pfsrc = PfSource.fromMemReqSource(req.reqSource),
       accessed = req_acquire || req_get,
-      rmw = req.modify,
       local = meta.local || req_put && !dirResult.hit
     )
     mp_grant.metaWen := true.B
@@ -413,7 +412,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
       accessed = true.B
     )
     mp_grant.txChannel := 0.U
-
+    mp_grant.modify := req.modify
     mp_grant
   }
   io.tasks.mainpipe.bits := ParallelPriorityMux(
