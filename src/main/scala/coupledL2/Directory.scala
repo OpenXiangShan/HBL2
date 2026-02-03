@@ -49,7 +49,7 @@ class MetaEntry(implicit p: Parameters) extends L2Bundle {
   // - 2'b10: rmw block after Get, untouched
   // - 2'b11: rmw block after Get, and probed
   // - 2'b01: rmw block after Put, once probed.
-  val rmw = Bool()
+  // val rmw = Bool() // This is moved to separate storage, for timing
   val local = Bool()
 
   def =/=(entry: MetaEntry): Bool = {
@@ -65,7 +65,7 @@ object MetaEntry {
   def apply(dirty: Bool, state: UInt, clients: UInt, alias: Option[UInt], prefetch: Bool = false.B,
             pfsrc: UInt = PfSource.NoWhere.id.U, accessed: Bool = false.B,
             tagErr: Bool = false.B, dataErr: Bool = false.B,
-            rmw: Bool = false.B, local: Bool = false.B
+            local: Bool = false.B
   )(implicit p: Parameters) = {
     val entry = Wire(new MetaEntry)
     entry.dirty := dirty
@@ -77,7 +77,6 @@ object MetaEntry {
     entry.accessed := accessed
     entry.tagErr := tagErr
     entry.dataErr := dataErr
-    entry.rmw := rmw
     entry.local := local
     entry
   }
@@ -95,6 +94,8 @@ class DirRead(implicit p: Parameters) extends L2Bundle {
   // when flush l2
   val cmoAll = Bool()
   val cmoWay = UInt(wayBits.W)
+  val setRMW = Bool()
+  val clearRMW = Bool()
 }
 
 class DirResult(implicit p: Parameters) extends L2Bundle {
@@ -105,6 +106,7 @@ class DirResult(implicit p: Parameters) extends L2Bundle {
   val meta = new MetaEntry()
   val error = Bool()
   val replacerInfo = new ReplacerInfo() // for TopDown usage
+  val rmw = Bool()
 }
 
 class ReplacerResult(implicit p: Parameters) extends L2Bundle {
@@ -189,6 +191,9 @@ class Directory(implicit p: Parameters) extends L2Module {
 
   val metaArray = Module(new SRAMTemplate(new MetaEntry, sets, ways, singlePort = true, hasMbist = mbist, hasSramCtl = hasSramCtl))
 
+  // consider appending this to replacer_sram
+  val rmwArray = RegInit(VecInit(Seq.fill(sets)(0.U(ways.W))))
+
   val tagRead_s3 = Wire(Vec(ways, UInt(tagBits.W)))
   val metaRead = Wire(Vec(ways, new MetaEntry()))
   val errorRead = Wire(Vec(ways, Bool()))
@@ -269,10 +274,10 @@ class Directory(implicit p: Parameters) extends L2Module {
   /* ====== read-modify-write data ====== */
   // data with rmw flag should be kept in L2 after read until write comes
   // so we should avoid these ways at allocation
-  // TODO! WARNING: restrict rmw ways to avoid deadlock
-  val rmwVecRaw = VecInit(metaAll_s3.map(_.rmw)).asUInt
-  // if rmwVec is all valid, we choose a random way, or we can just let it not function
-  val rmwVec = Mux(rmwVecRaw === Fill(ways, 1.U), 0.U(ways.W), rmwVecRaw)
+  val rmwVec = rmwArray(req_s3.set)
+  // after Put to L2 is implemented, rmw is no longer mandatorily required
+  //   so this is just a performance optimization rather than a functional requirement
+  //   and even unnecessary when Put-miss can overwrite read-only data
 
   /* ====== refill retry ====== */
   // when refill, ways that have not finished writing its refillData back to DS (in MSHR Release),
@@ -328,12 +333,27 @@ class Directory(implicit p: Parameters) extends L2Module {
   io.resp.bits.set   := set_s3
   io.resp.bits.error := error_s3  // depends on ECC
   io.resp.bits.replacerInfo := replacerInfo_s3
+  io.resp.bits.rmw   := rmwVec(way_s3)
 
   dontTouch(io)
   dontTouch(metaArray.io)
   dontTouch(tagArray.io)
 
   io.read.ready := !io.metaWReq.valid && !io.tagWReq.valid && !replacerWen
+
+  /* ====== !! RMW array update !! ====== */
+  val rmwWayLimit = PopCount(rmwVec) <= (ways/2).U
+  val finalWayMask = UIntToOH(way_s3)
+
+  // hitRMW: rmw-Get hit and refill needs to set
+  // clearRMW: only Put-hit needs to clear
+  when (req_s3.setRMW && rmwWayLimit && (reqValid_s3 && hit_s3 || refillReqValid_s3 && !refillRetry)) {
+    rmwArray(req_s3.set) := rmwArray(req_s3.set) | finalWayMask
+  }
+
+  when (req_s3.clearRMW && reqValid_s3 && hit_s3) {
+    rmwArray(req_s3.set) := rmwArray(req_s3.set) & (~finalWayMask).asUInt
+  }
 
   /* ======!! Replacement logic !!====== */
   /* ====== Read, choose replaceWay ====== */

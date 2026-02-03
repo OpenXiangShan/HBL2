@@ -188,6 +188,8 @@ class RequestArb(implicit p: Parameters) extends L2Module
   io.dirRead_s1.bits.mshrId := task_s1.bits.mshrId
   io.dirRead_s1.bits.cmoAll := task_s1.bits.cmoAll
   io.dirRead_s1.bits.cmoWay := task_s1.bits.way
+  io.dirRead_s1.bits.setRMW := task_s1.bits.modify
+  io.dirRead_s1.bits.clearRMW := task_s1.bits.fromA && !task_s1.bits.mshrTask && task_s1.bits.opcode === PutFullData
 
   // block same-set A req
   io.s1Entrance.valid := mshr_task_s1.valid && s2_ready && mshr_task_s1.bits.metaWen || io.sinkC.fire || io.sinkB.fire
