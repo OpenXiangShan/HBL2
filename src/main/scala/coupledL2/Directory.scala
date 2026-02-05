@@ -191,7 +191,7 @@ class Directory(implicit p: Parameters) extends L2Module {
   val metaArray = Module(new SRAMTemplate(new MetaEntry, sets, ways, singlePort = true, hasMbist = mbist, hasSramCtl = hasSramCtl))
 
   // consider appending this to replacer_sram
-  val rmwArray = RegInit(VecInit(Seq.fill(sets)(0.U(ways.W))))
+  val rmwArray = Module(new SRAMTemplate(UInt(ways.W), sets, 1, singlePort = true, shouldReset = true, hasMbist = mbist, hasSramCtl = hasSramCtl))
 
   val tagRead_s3 = Wire(Vec(ways, UInt(tagBits.W)))
   val metaRead = Wire(Vec(ways, new MetaEntry()))
@@ -273,7 +273,8 @@ class Directory(implicit p: Parameters) extends L2Module {
   /* ====== read-modify-write data ====== */
   // data with rmw flag should be kept in L2 after read until write comes
   // so we should avoid these ways at allocation
-  val rmwVec = rmwArray(req_s3.set)
+  val rmwArrayRead = rmwArray.io.r(io.read.fire, io.read.bits.set).resp.data(0)
+  val rmwVec = RegEnable(rmwArrayRead, 0.U(ways.W), reqValid_s2)
   // after Put to L2 is implemented, rmw is no longer mandatorily required
   //   so this is just a performance optimization rather than a functional requirement
   //   and even unnecessary when Put-miss can overwrite read-only data
@@ -344,15 +345,23 @@ class Directory(implicit p: Parameters) extends L2Module {
   val rmwWayLimit = PopCount(rmwVec) <= (ways/2).U
   val finalWayMask = UIntToOH(way_s3)
 
+  val rmwSet = req_s3.setRMW && rmwWayLimit && (reqValid_s3 && hit_s3 || refillReqValid_s3 && !refillRetry)
+  val rmwClear = req_s3.clearRMW && reqValid_s3 && hit_s3
+  val rmwWen = rmwSet || rmwClear
+
   // hitRMW: rmw-Get hit and refill needs to set
   // clearRMW: only Put-hit needs to clear
-  when (req_s3.setRMW && rmwWayLimit && (reqValid_s3 && hit_s3 || refillReqValid_s3 && !refillRetry)) {
-    rmwArray(req_s3.set) := rmwArray(req_s3.set) | finalWayMask
-  }
+  val newRMWVec = MuxCase(rmwVec, Seq(
+    rmwSet   -> (rmwVec | finalWayMask),
+    rmwClear -> (rmwVec & (~finalWayMask).asUInt)
+  ))
 
-  when (req_s3.clearRMW && reqValid_s3 && hit_s3) {
-    rmwArray(req_s3.set) := rmwArray(req_s3.set) & (~finalWayMask).asUInt
-  }
+  rmwArray.io.w(
+    !resetFinish || rmwWen,
+    Mux(resetFinish, newRMWVec, 0.U),
+    Mux(resetFinish, set_s3, resetIdx),
+    1.U
+  )
 
   /* ======!! Replacement logic !!====== */
   /* ====== Read, choose replaceWay ====== */
