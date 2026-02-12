@@ -82,7 +82,15 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.tagWen := false.B
     task.dsWen := false.B
     task.wayMask := 0.U(cacheParams.ways.W)
-    task.reqSource := a.user.lift(utility.ReqSourceKey).getOrElse(MemReqSource.NoWhere.id.U)
+	val defaultReqSrc = MuxLookup(a.opcode, MemReqSource.NoWhere.id.U)(Seq(
+      AcquireBlock    -> MemReqSource.CPULoadData.id.U,
+      AcquirePerm     -> MemReqSource.CPUStoreData.id.U,
+      Get             -> MemReqSource.CPULoadData.id.U,
+      PutFullData     -> MemReqSource.CPUStoreData.id.U,
+      PutPartialData  -> MemReqSource.CPUStoreData.id.U
+    ))
+    task.reqSource := a.user.lift(utility.ReqSourceKey).getOrElse(defaultReqSrc)
+	//task.reqSource := a.user.lift(utility.ReqSourceKey).getOrElse(MemReqSource.NoWhere.id.U)
     task.replTask := false.B
     task.matrixTask := MatrixInfo.isMatrix(matrixKey)
     task.modify := MatrixInfo.isRMW(matrixKey)

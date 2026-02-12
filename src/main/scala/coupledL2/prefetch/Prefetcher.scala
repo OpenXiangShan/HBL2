@@ -251,10 +251,7 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
         virtualTrain = false,
         badScore = 1,
         offsetList = Seq(
-          -32, -30, -27, -25, -24, -20, -18, -16, -15,
-          -12, -10, -9, -8, -6, -5, -4, -3, -2, -1,
-          1, 2, 3, 4, 5, 6, 8, 9, 10,
-          12, 15, 16, 18, 20, 24, 25, 27, 30
+          1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 16, 20, 24, 32
         )
       )))
     })))
@@ -265,21 +262,12 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
       case L2ParamKey => p(L2ParamKey).copy(prefetch = Seq(BOPParameters(
         badScore = 2,
         offsetList = Seq(
-          -117, -147, -91, 117, 147, 91,
-          -256, -250, -243, -240, -225, -216, -200,
-          -192, -180, -162, -160, -150, -144, -135, -128,
-          -125, -120, -108, -100, -96, -90, -81, -80,
-          -75, -72, -64, -60, -54, -50, -48, -45,
-          -40, -36, -32, -30, -27, -25, -24, -20,
-          -18, -16, -15, -12, -10, -9, -8, -6,
-          -5, -4, -3, -2, -1,
-          1, 2, 3, 4, 5, 6, 8,
-          9, 10, 12, 15, 16, 18, 20, 24,
-          25, 27, 30, 32, 36, 40, 45, 48,
-          50, 54, 60, 64, 72, 75, 80, 81,
-          90, 96, 100, 108, 120, 125, 128, 135,
-          144, 150, 160, 162, 180, 192, 200, 216,
-          225, 240, 243, 250 /*, 256*/
+          // 基础小步幅
+          1, 2, 4, 8, 16, 32,
+          // 关键：针对矩阵 A 的大跨度，只有在虚拟层才能看到规律
+          68,   // 4352 / 64
+          136,  // 68 * 2
+          272   // 68 * 4
         )
       )))
     })))
@@ -365,20 +353,26 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
   val hasPBOPReq = if (hasBOP) pbop.get.io.req.valid else false.B
   val hasTPReq = if (hasTPPrefetcher) tp.get.io.req.valid else false.B
 
+  val vbopTrainFire = if (hasBOP) vbop.get.io.train.fire else false.B
+  val vbopRespFire = if (hasBOP) vbop.get.io.resp.fire else false.B
+  val vbopReqFire = if (hasBOP) vbop.get.io.req.fire else false.B
+
   XSPerfAccumulate("prefetch_req_fromL1", hasReceiverReq)
   XSPerfAccumulate("prefetch_req_fromVBOP", hasVBOPReq)
   XSPerfAccumulate("prefetch_req_fromPBOP", hasPBOPReq)
   XSPerfAccumulate("prefetch_req_fromBOP", hasVBOPReq || hasPBOPReq)
-  XSPerfAccumulate("prefetch_req_fromTP",  hasTPReq)
+  XSPerfAccumulate("prefetch_req_fromTP", hasTPReq)
 
   XSPerfAccumulate("prefetch_req_selectL1", hasReceiverReq)
   XSPerfAccumulate("prefetch_req_selectVBOP", hasVBOPReq && !hasReceiverReq)
   XSPerfAccumulate("prefetch_req_selectPBOP", hasPBOPReq && !hasReceiverReq && !hasVBOPReq)
   XSPerfAccumulate("prefetch_req_selectBOP", (hasPBOPReq || hasVBOPReq) && !hasReceiverReq)
   XSPerfAccumulate("prefetch_req_selectTP", hasTPReq && !hasReceiverReq && !hasVBOPReq && !hasPBOPReq)
-  XSPerfAccumulate("prefetch_req_SMS_other_overlapped",
-    hasReceiverReq && (hasVBOPReq || hasPBOPReq || hasTPReq))
+  XSPerfAccumulate("prefetch_req_SMS_other_overlapped", hasReceiverReq && (hasVBOPReq || hasPBOPReq || hasTPReq))
 
+  XSPerfAccumulate("prefetch_vbop_train_fire", vbopTrainFire)
+  XSPerfAccumulate("prefetch_vbop_resp_fire", vbopRespFire)
+  XSPerfAccumulate("prefetch_vbop_req_fire", vbopReqFire)
   // NOTE: set basicDB false when debug over
   // TODO: change the enable signal to not target the BOP
   class TrainEntry extends Bundle{

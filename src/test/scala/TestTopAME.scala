@@ -45,6 +45,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
   override lazy val desiredName: String = "TestTop"
   val delayFactor = 0.2
   val cacheParams = p(L2ParamKey)
+  val vaddrBits = cacheParams.clientCaches.headOption.flatMap(_.vaddrBitsOpt).getOrElse(64)
 
   def createClientNode(name: String, sources: Int) = {
     val masterNode = TLClientNode(Seq(
@@ -59,7 +60,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
         channelBytes = TLChannelBeatBytes(cacheParams.blockBytes),
         minLatency = 1,
         echoFields = Nil,
-        requestFields = Seq(AliasField(2), PrefetchField()),
+        requestFields = Seq(AliasField(2), PrefetchField(), VaddrField(vaddrBits)),
         responseKeys = cacheParams.respKey
       )
     ))
@@ -70,11 +71,17 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
   val m_num=p(MNumKey)
   val l1d = createClientNode(s"l1d", 32)
   val l1i = TLClientNode(Seq(
-    TLMasterPortParameters.v1(
-      clients = Seq(TLMasterParameters.v1(
+    TLMasterPortParameters.v2(
+      masters = Seq(TLMasterParameters.v1(
         name = s"l1i",
-        sourceId = IdRange(0, 32)
-      ))
+        sourceId = IdRange(0, 32),
+        supportsProbe = TransferSizes.none
+      )),
+      channelBytes = TLChannelBeatBytes(cacheParams.blockBytes),
+      minLatency = 1,
+      echoFields = Nil,
+      requestFields = Seq(VaddrField(vaddrBits)),
+      responseKeys = cacheParams.respKey
     )
   ))
 
@@ -86,14 +93,14 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
             name = s"matrix${i}_${j}",
             sourceId = IdRange(0, 32),
             // supportsProbe = TransferSizes(cacheParams.blockBytes)// 缓存一致性管理
-            // supportsProbe = TransferSizes.none,
+            // supportsProbe = TransferSizes(cacheParams.blockBytes),
             // supportsProbe = TransferSizes(1,cacheParams.blockBytes),
             // supportsGet = TransferSizes(1,cacheParams.blockBytes),
             // supportsPutFull = TransferSizes(1,cacheParams.blockBytes),
             // supportsPutPartial = TransferSizes(1,cacheParams.blockBytes),
             // requestFields = MatrixField
             )),
-            requestFields = Seq(MatrixField(2), AmeIndexField())
+            requestFields = Seq(MatrixField(2), AmeIndexField(), PrefetchField(), VaddrField(vaddrBits))
         )
       ))
     }
@@ -115,12 +122,12 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
       sets = l2_sets,
       channelBytes        = TLChannelBeatBytes(32),
       blockBytes          = 64,
-      clientCaches = Seq(L1Param(aliasBitsOpt = Some(2), vaddrBitsOpt = Some(16))),
+      clientCaches = Seq(L1Param(aliasBitsOpt = Some(2), vaddrBitsOpt = Some(64))),
       echoField = Seq(DirtyField()),
-      // prefetch = Seq(BOPParameters(
-      //   rrTableEntries = 16,
-      //   rrTagBits = 6
-      // )),
+      prefetch = Seq(BOPParameters(
+        rrTableEntries = 16,
+        rrTagBits = 6
+      )),
       // tagECC = Some("secded"),
       // dataECC = Some("secded"),
       enableTagECC = false, //XS use true
@@ -250,18 +257,35 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
         logm
     }
     l2.module.io.hartId := DontCare
-    l2.module.io.l2_tlb_req <> DontCare
-    l2.module.io.hartId := DontCare
-    l2.module.io.pfCtrlFromCore := DontCare
-    l2.module.io.debugTopDown <> DontCare
-    l2.module.io.matrixDataOut512L2 <> DontCare
-    // For matrix get , l2 return data
+    val tlbDummy = Wire(chiselTypeOf(l2.module.io.l2_tlb_req))
+    tlbDummy.req.valid := false.B
+    tlbDummy.req.bits := 0.U.asTypeOf(tlbDummy.req.bits)
+    tlbDummy.req.ready := true.B
+    tlbDummy.req_kill := false.B
+    tlbDummy.resp.valid := false.B
+    tlbDummy.resp.bits := 0.U.asTypeOf(tlbDummy.resp.bits)
+    tlbDummy.pmp_resp := 0.U.asTypeOf(tlbDummy.pmp_resp)
+    l2.module.io.l2_tlb_req <> tlbDummy
+    l2.module.io.debugTopDown.robTrueCommit := 0.U
+    l2.module.io.debugTopDown.robHeadPaddr.valid := false.B
+    l2.module.io.debugTopDown.robHeadPaddr.bits := 0.U
+    //l2.module.io.pfCtrlFromCore := DontCare
+    l2.module.io.pfCtrlFromCore.l2_pf_master_en := true.B
+    l2.module.io.pfCtrlFromCore.l2_pf_recv_en  := true.B
+    l2.module.io.pfCtrlFromCore.l2_pbop_en     := true.B
+    l2.module.io.pfCtrlFromCore.l2_vbop_en     := true.B
+    l2.module.io.pfCtrlFromCore.l2_tp_en       := true.B
+	// // 将这些 true.B 改为 false.B
+	// l2.module.io.pfCtrlFromCore.l2_pf_master_en := false.B // 总开关关掉即可
+	// l2.module.io.pfCtrlFromCore.l2_pf_recv_en  := false.B
+	// l2.module.io.pfCtrlFromCore.l2_pbop_en     := false.B
+	// l2.module.io.pfCtrlFromCore.l2_vbop_en     := false.B
+	// l2.module.io.pfCtrlFromCore.l2_tp_en       := false.B
     val matrix_data_out = IO(Vec(l2_banks, DecoupledIO(new MatrixDataBundle())))
     matrix_data_out <> l2.module.io.matrixDataOut512L2
-  }
-
+    // For matrix get , l2 return data
 }
-
+}
   /*  L1D L1I
    *  \  / 
    *   L2 -- (Matrix sends Get/Put)

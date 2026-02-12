@@ -283,6 +283,10 @@ abstract class CoupledL2Base(implicit p: Parameters) extends LazyModule with Has
     endSinkId = idsAll
   )
 
+  val extraReqFields = cacheParams.clientCaches.headOption
+    .flatMap(_.vaddrBitsOpt.map(VaddrField(_)))
+    .toSeq
+
   val clientPortParams = (m: TLMasterPortParameters) => TLMasterPortParameters.v2(
     Seq(
       TLMasterParameters.v2(
@@ -296,7 +300,7 @@ abstract class CoupledL2Base(implicit p: Parameters) extends LazyModule with Has
     channelBytes = cacheParams.channelBytes,
     minLatency = 1,
     echoFields = cacheParams.echoField,
-    requestFields = cacheParams.reqField,
+    requestFields = cacheParams.reqField ++ extraReqFields,
     responseKeys = cacheParams.respKey
   )
 

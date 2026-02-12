@@ -34,6 +34,7 @@ class TestTop_L2()(implicit p: Parameters) extends LazyModule {
   override lazy val desiredName: String = "TestTop"
   val delayFactor = 0.5
   val cacheParams = p(L2ParamKey)
+  val vaddrBits = cacheParams.clientCaches.headOption.flatMap(_.vaddrBitsOpt).getOrElse(64)
 
   def createClientNode(name: String, sources: Int) = {
     val masterNode = TLClientNode(Seq(
@@ -48,7 +49,7 @@ class TestTop_L2()(implicit p: Parameters) extends LazyModule {
         channelBytes = TLChannelBeatBytes(cacheParams.blockBytes),
         minLatency = 1,
         echoFields = Nil,
-        requestFields = Seq(AliasField(2)),
+        requestFields = Seq(AliasField(2), VaddrField(vaddrBits)),
         responseKeys = cacheParams.respKey
       )
     ))
@@ -122,6 +123,7 @@ class TestTop_L2L3()(implicit p: Parameters) extends LazyModule {
   override lazy val desiredName: String = "TestTop"
   val delayFactor = 0.2
   val cacheParams = p(L2ParamKey)
+  val vaddrBits = cacheParams.clientCaches.headOption.flatMap(_.vaddrBitsOpt).getOrElse(64)
 
   def createClientNode(name: String, sources: Int) = {
     val masterNode = TLClientNode(Seq(
@@ -145,11 +147,17 @@ class TestTop_L2L3()(implicit p: Parameters) extends LazyModule {
 
   val l1d = createClientNode(s"l1d", 32)
   val l1i = TLClientNode(Seq(
-    TLMasterPortParameters.v1(
-      clients = Seq(TLMasterParameters.v1(
+    TLMasterPortParameters.v2(
+      masters = Seq(TLMasterParameters.v1(
         name = s"l1i",
-        sourceId = IdRange(0, 32)
-      ))
+        sourceId = IdRange(0, 32),
+        supportsProbe = TransferSizes.none
+      )),
+      channelBytes = TLChannelBeatBytes(cacheParams.blockBytes),
+      minLatency = 1,
+      echoFields = Nil,
+      requestFields = Seq(VaddrField(vaddrBits)),
+      responseKeys = cacheParams.respKey
     )
   ))
   val master_nodes = Seq(l1d, l1i)
@@ -159,7 +167,7 @@ class TestTop_L2L3()(implicit p: Parameters) extends LazyModule {
       name = s"l2",
       ways = 4,
       sets = 128,
-      clientCaches = Seq(L1Param(aliasBitsOpt = Some(2), vaddrBitsOpt = Some(16))),
+      clientCaches = Seq(L1Param(aliasBitsOpt = Some(2), vaddrBitsOpt = Some(64))),
       echoField = Seq(DirtyField()),
       prefetch = Seq(BOPParameters(
         rrTableEntries = 16,
@@ -269,6 +277,7 @@ class TestTop_L2_Standalone()(implicit p: Parameters) extends LazyModule {
   override lazy val desiredName: String = "TestTop"
   val delayFactor = 0.5
   val cacheParams = p(L2ParamKey)
+  val vaddrBits = cacheParams.clientCaches.headOption.flatMap(_.vaddrBitsOpt).getOrElse(64)
 
   def createClientNode(name: String, sources: Int) = {
     val masterNode = TLClientNode(Seq(
@@ -283,7 +292,7 @@ class TestTop_L2_Standalone()(implicit p: Parameters) extends LazyModule {
         channelBytes = TLChannelBeatBytes(cacheParams.blockBytes),
         minLatency = 1,
         echoFields = Nil,
-        requestFields = Seq(AliasField(2)),
+        requestFields = Seq(AliasField(2), VaddrField(vaddrBits)),
         responseKeys = cacheParams.respKey
       )
     ))
@@ -378,6 +387,7 @@ class TestTop_L2L3L2()(implicit p: Parameters) extends LazyModule {
   override lazy val desiredName: String = "TestTop"
   val delayFactor = 0.2
   val cacheParams = p(L2ParamKey)
+  val vaddrBits = cacheParams.clientCaches.headOption.flatMap(_.vaddrBitsOpt).getOrElse(64)
 
   val nrL2 = 2
 
@@ -394,7 +404,7 @@ class TestTop_L2L3L2()(implicit p: Parameters) extends LazyModule {
         channelBytes = TLChannelBeatBytes(cacheParams.blockBytes),
         minLatency = 1,
         echoFields = Nil,
-        requestFields = Seq(AliasField(2)),
+        requestFields = Seq(AliasField(2), VaddrField(vaddrBits)),
         responseKeys = cacheParams.respKey
       )
     ))
@@ -529,6 +539,7 @@ class TestTop_fullSys()(implicit p: Parameters) extends LazyModule {
   override lazy val desiredName: String = "TestTop"
   val delayFactor = 0.2
   val cacheParams = p(L2ParamKey)
+  val vaddrBits = cacheParams.clientCaches.headOption.flatMap(_.vaddrBitsOpt).getOrElse(64)
 
   val nrL2 = 2
 
@@ -545,7 +556,7 @@ class TestTop_fullSys()(implicit p: Parameters) extends LazyModule {
         channelBytes = TLChannelBeatBytes(cacheParams.blockBytes),
         minLatency = 1,
         echoFields = Nil,
-        requestFields = Seq(AliasField(2)),
+        requestFields = Seq(AliasField(2), VaddrField(vaddrBits)),
         responseKeys = cacheParams.respKey
       )
     ))
