@@ -9,6 +9,7 @@ import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile.MaxHartIdBits
 import freechips.rocketchip.tilelink._
 import huancun._
+import huancun.{TPmetaReq, TPmetaResp}
 import coupledL2.prefetch._
 import coupledL2.tl2tl._
 import utility._
@@ -127,7 +128,9 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
       prefetch = Seq(BOPParameters(
         rrTableEntries = 16,
         rrTagBits = 6
-      )),
+      ),
+        TPParameters()
+      ),
       // tagECC = Some("secded"),
       // dataECC = Some("secded"),
       enableTagECC = false, //XS use true
@@ -221,7 +224,34 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
     l3.node :*=
     l2xbar
 
+  // Dummy TPmeta connections - minimal workaround for Diplomacy requirements
+  val tpmetaReqSink = if (l2.hasTPPrefetcher) {
+    val sink = BundleBridgeSink[DecoupledIO[TPmetaReq]](None)
+    sink :=* l2.tpmeta_source_node.get
+    Some(sink)
+  } else None
+  
+  val tpmetaRespSource = if (l2.hasTPPrefetcher) {
+    val source = BundleBridgeSource[ValidIO[TPmetaResp]](None)
+    l2.tpmeta_sink_node.get :=* source
+    Some(source)
+  } else None
+
+
   lazy val module = new LazyModuleImp(this) {
+
+    // TPmeta module connected to dummy nodes
+    if (l2.hasTPPrefetcher) {
+      val pftParams: Parameters = p.alterPartial {
+        case EdgeInKey => l2.node.in.head._2
+        case EdgeOutKey => l2.node.out.head._2
+        case BankBitsKey => l2.bankBits
+      }
+      val tpmeta = Module(new huancun.prefetch.TPmeta()(pftParams))
+      tpmeta.io.req <> tpmetaReqSink.get.in.head._1
+      tpmetaRespSource.get.out.head._1 <> tpmeta.io.resp
+    }
+
     val timer = IO(Input(UInt(64.W)))
     val logEnable = IO(Input(Bool()))
     val clean = IO(Input(Bool()))

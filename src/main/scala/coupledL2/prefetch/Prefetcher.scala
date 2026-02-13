@@ -278,10 +278,12 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
   val pfRcv = if (hasReceiver) Some(Module(new PrefetchReceiver())) else None
 
   // =================== Connection for each Prefetcher =====================
-  // Rcv > VBOP > PBOP > TP
+  // Rcv > TP > VBOP > PBOP
   if (hasBOP) {
     vbop.get.io.enable := vbop_en
-    vbop.get.io.req.ready :=  (if(hasReceiver) !pfRcv.get.io.req.valid else true.B)
+    vbop.get.io.req.ready :=
+      (if(hasReceiver) !pfRcv.get.io.req.valid else true.B) &&
+      (if(hasTPPrefetcher) !tp.get.io.req.valid else true.B)
     vbop.get.io.train <> io.train
     vbop.get.io.train.valid := io.train.valid && (io.train.bits.reqsource =/= MemReqSource.L1DataPrefetch.id.U)
     vbop.get.io.resp <> io.resp
@@ -292,6 +294,7 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
     pbop.get.io.enable := pbop_en
     pbop.get.io.req.ready :=
       (if(hasReceiver) !pfRcv.get.io.req.valid else true.B) &&
+      (if(hasTPPrefetcher) !tp.get.io.req.valid else true.B) &&
       (if(hasBOP) !vbop.get.io.req.valid else true.B)
     pbop.get.io.train <> io.train
     pbop.get.io.train.valid := io.train.valid && (io.train.bits.reqsource =/= MemReqSource.L1DataPrefetch.id.U)
@@ -321,8 +324,7 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
     tp.get.io.train <> io.train
     tp.get.io.resp <> io.resp
     tp.get.io.hartid := hartId
-    tp.get.io.req.ready := (if(hasReceiver) !pfRcv.get.io.req.valid else true.B) &&
-      (if(hasBOP) !vbop.get.io.req.valid && !pbop.get.io.req.valid else true.B)
+    tp.get.io.req.ready := (if(hasReceiver) !pfRcv.get.io.req.valid else true.B)
 
     tp.get.io.tpmeta_port <> tpio.tpmeta_port.get
   }
@@ -336,13 +338,13 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
 
   pftQueue.io.enq.valid :=
     (if (hasReceiver)     pfRcv.get.io.req.valid                         else false.B) ||
-    (if (hasBOP)          vbop.get.io.req.valid || pbop.get.io.req.valid else false.B) ||
-    (if (hasTPPrefetcher) tp.get.io.req.valid                            else false.B)
+    (if (hasTPPrefetcher) tp.get.io.req.valid                            else false.B) ||
+    (if (hasBOP)          vbop.get.io.req.valid || pbop.get.io.req.valid else false.B)
   pftQueue.io.enq.bits := ParallelPriorityMux(Seq(
     if (hasReceiver)     pfRcv.get.io.req.valid -> pfRcv.get.io.req.bits else false.B -> 0.U.asTypeOf(io.req.bits),
+    if (hasTPPrefetcher) tp.get.io.req.valid -> tp.get.io.req.bits       else false.B -> 0.U.asTypeOf(io.req.bits),
     if (hasBOP)          vbop.get.io.req.valid -> vbop.get.io.req.bits   else false.B -> 0.U.asTypeOf(io.req.bits),
-    if (hasBOP)          pbop.get.io.req.valid -> pbop.get.io.req.bits   else false.B -> 0.U.asTypeOf(io.req.bits),
-    if (hasTPPrefetcher) tp.get.io.req.valid -> tp.get.io.req.bits       else false.B -> 0.U.asTypeOf(io.req.bits)
+    if (hasBOP)          pbop.get.io.req.valid -> pbop.get.io.req.bits   else false.B -> 0.U.asTypeOf(io.req.bits)
   ))
 
   pipe.io.in <> pftQueue.io.deq
