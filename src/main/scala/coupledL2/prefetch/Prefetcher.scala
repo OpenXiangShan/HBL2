@@ -278,6 +278,13 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
   val pfRcv = if (hasReceiver) Some(Module(new PrefetchReceiver())) else None
 
   // =================== Connection for each Prefetcher =====================
+  // default TLB request outputs when BOP is disabled
+  if (!hasBOP) {
+    io.tlb_req.req.valid := false.B
+    io.tlb_req.req.bits := 0.U.asTypeOf(io.tlb_req.req.bits)
+    io.tlb_req.req_kill := false.B
+    io.tlb_req.resp.ready := true.B
+  }
   // Rcv > TP > VBOP > PBOP
   if (hasBOP) {
     vbop.get.io.enable := vbop_en

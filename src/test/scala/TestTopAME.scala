@@ -125,10 +125,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
       blockBytes          = 64,
       clientCaches = Seq(L1Param(aliasBitsOpt = Some(2), vaddrBitsOpt = Some(64))),
       echoField = Seq(DirtyField()),
-      prefetch = Seq(BOPParameters(
-        rrTableEntries = 16,
-        rrTagBits = 6
-      ),
+      prefetch = Seq(
         TPParameters()
       ),
       // tagECC = Some("secded"),
