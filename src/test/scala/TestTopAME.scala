@@ -126,7 +126,10 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
       echoField = Seq(DirtyField()),
       prefetch = Seq(BOPParameters(
         rrTableEntries = 16,
-        rrTagBits = 6
+        rrTagBits = 6,
+        streamIsolationEnable = true,
+        streamIdBits = 2,
+        streamIdBaseBit = 15
       )),
       // tagECC = Some("secded"),
       // dataECC = Some("secded"),

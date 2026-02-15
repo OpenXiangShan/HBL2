@@ -40,28 +40,31 @@ case class BOPParameters(
   virtualTrain: Boolean = true,
   rrTableEntries: Int = 256,
   rrTagBits:      Int = 12,
+  streamIsolationEnable: Boolean = true,
+  streamIdBits: Int = 2,
+  streamIdBaseBit: Int = 15,
   scoreBits:      Int = 5,
   roundMax:       Int = 50,
   badScore:       Int = 2,
   tlbReplayCnt:   Int = 10,
   dQEntries: Int = 16,
-  dQLatency: Int = 300,
+  dQLatency: Int = 30,
   dQMaxLatency: Int = 512,
   offsetList: Seq[Int] = Seq(
-    -256, -250, -243, -240, -225, -216, -200,
-    -192, -180, -162, -160, -150, -144, -135, -128,
-    -125, -120, -108, -100, -96, -90, -81, -80,
-    -75, -72, -64, -60, -54, -50, -48, -45,
-    -40, -36, -32, -30, -27, -25, -24, -20,
-    -18, -16, -15, -12, -10, -9, -8, -6,
+    // -256, -250, -243, -240, -225, -216, -200,
+    // -192, -180, -162, -160, -150, -144, -135, -128,
+    // -125, -120, -108, -100, -96, -90, -81, -80,
+    // -75, -72, -64, -60, -54, -50, -48, -45,
+    // -40, -36, -32, -30, -27, -25, -24, -20,
+    // -18, -16, -15, -12, -10, -9, -8, -6,
     -5, -4, -3, -2, -1,
     1, 2, 3, 4, 5, 6, 8,
     9, 10, 12, 15, 16, 18, 20, 24,
-    25, 27, 30, 32, 36, 40, 45, 48,
-    50, 54, 60, 64, 72, 75, 80, 81,
-    90, 96, 100, 108, 120, 125, 128, 135,
-    144, 150, 160, 162, 180, 192, 200, 216,
-    225, 240, 243, 250/*, 256*/
+    // 25, 27, 30, 32, 36, 40, 45, 48,
+    // 50, 54, 60, 64, 72, 75, 80, 81,
+    // 90, 96, 100, 108, 120, 125, 128, 135,
+    // 144, 150, 160, 162, 180, 192, 200, 216,
+    // 225, 240, 243, 250/*, 256*/
   )
   )
     extends PrefetchParameters {
@@ -89,6 +92,11 @@ trait HasBOPParams extends HasPrefetcherHelper {
   def rrTableEntries = if (defaultConfig) bopParams.rrTableEntries else 2
   def rrIdxBits = log2Up(rrTableEntries)
   def rrTagBits = if (defaultConfig) bopParams.rrTagBits else (fullAddrBits - offsetBits - rrIdxBits)
+  def streamIsolationEnable = bopParams.streamIsolationEnable
+  def streamIdBits = bopParams.streamIdBits
+  def streamIdBaseBit = bopParams.streamIdBaseBit
+  def streamCount = if (streamIsolationEnable) (1 << streamIdBits) else 1
+  def streamIdxBits = math.max(1, log2Ceil(streamCount))
   def scoreBits = bopParams.scoreBits
   def roundMax = bopParams.roundMax
   def badScore = bopParams.badScore
@@ -105,11 +113,25 @@ trait HasBOPParams extends HasPrefetcherHelper {
   def scoreTableIdxBits = log2Up(scores)
   // val prefetchIdWidth = log2Up(inflightEntries)
 
+  require(!streamIsolationEnable || streamIdBits > 0, "streamIdBits must be > 0 when stream isolation is enabled")
+  require(!streamIsolationEnable || (streamIdBaseBit + streamIdBits) <= fullAddrBits,
+    "streamId range must be within fullAddrBits")
+  require(!streamIsolationEnable || rrTagBits > streamIdxBits,
+    "rrTagBits must be larger than streamIdxBits when stream isolation is enabled")
+
   def signedExtend(x: UInt, width: Int): UInt = {
     if (x.getWidth >= width) {
       x
     } else {
       Cat(Fill(width - x.getWidth, x.head(1)), x)
+    }
+  }
+
+  def getStreamId(addr: UInt): UInt = {
+    if (streamIsolationEnable) {
+      addr(streamIdBaseBit + streamIdBits - 1, streamIdBaseBit)
+    } else {
+      0.U(streamIdxBits.W)
     }
   }
 }
@@ -164,7 +186,14 @@ class RecentRequestTable(name: String)(implicit p: Parameters) extends BOPModule
   def hash1(addr:    UInt) = lineAddr(addr)(rrIdxBits - 1, 0)
   def hash2(addr:    UInt) = lineAddr(addr)(2 * rrIdxBits - 1, rrIdxBits)
   def idx(addr:      UInt) = hash1(addr) ^ hash2(addr)
-  def tag(addr:      UInt) = lineAddr(addr)(rrTagBits + rrIdxBits - 1, rrIdxBits)
+  def rawTag(addr:   UInt) = lineAddr(addr)(rrTagBits + rrIdxBits - 1, rrIdxBits)
+  def tag(addr:      UInt) = {
+    if (streamIsolationEnable) {
+      Cat(getStreamId(addr), rawTag(addr)(rrTagBits - streamIdxBits - 1, 0))
+    } else {
+      rawTag(addr)
+    }
+  }
   def rrTableEntry() = new Bundle {
     val valid = Bool()
     val tag = UInt(rrTagBits.W)
