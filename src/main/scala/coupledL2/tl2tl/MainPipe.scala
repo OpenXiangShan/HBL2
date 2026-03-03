@@ -578,8 +578,10 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
   val dataMetaError_s5 = RegInit(false.B)
   val l2TagError_s5 = RegInit(false.B)
   // those hit@s3 and ready to fire@s5, and Now wait@s4
-  val pendingC_s4 = (task_s4.bits.fromB && !task_s4.bits.mshrTask && task_s4.bits.opcode === ProbeAckData) ||
-    (task_s4.bits.fromA && !task_s4.bits.mshrTask && task_s4.bits.opcode === ReleaseData)
+  val pendingC_s4 = !task_s4.bits.mshrTask && (
+    (task_s4.bits.fromB && task_s4.bits.opcode === ProbeAckData) ||
+    (task_s4.bits.fromA && task_s4.bits.matrixTask && task_s4.bits.opcode === ReleaseData)
+  )
   val pendingD_s4 = task_s4.bits.fromA && !task_s4.bits.mshrTask &&
     (task_s4.bits.opcode === GrantData || task_s4.bits.opcode === AccessAckData)
 
