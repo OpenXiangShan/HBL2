@@ -52,6 +52,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
   val io = IO(new Bundle() {
     val id = Input(UInt(mshrBits.W))
     val status = ValidIO(new MSHRStatus)
+    val statAlloc = ValidIO(new MSHRAllocStatus)
     val msInfo = ValidIO(new MSHRInfo)
     val alloc = Flipped(ValidIO(new MSHRRequest))
     val tasks = new MSHRTasks()
@@ -82,6 +83,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
   val state     = RegInit(new FSMState(), initState)
 
   val req_released_chiOpcode = RegInit(0.U.asTypeOf(UInt(OPCODE_WIDTH.W)))
+  val req_released_likelyShared = RegInit(false.B)
 
   assert(!(req_valid && dirResult.hit && !isT(meta.state) && meta.dirty),
     "directory valid read with dirty under non-T state")
@@ -393,9 +395,8 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     oa.ns := enableNS.B
     // set 'LikelyShared' to 1 here when:
     //  - WriteEvictOrEvict (on retry) with SC state
-    oa.likelyshared := Mux(
-      release_valid2,
-      afterIssueEbOrElse(req_released_chiOpcode === WriteEvictOrEvict && meta.state === BRANCH, false.B),
+    oa.likelyshared := afterIssueEbOrElse(
+      Mux(release_valid2, req_released_likelyShared, false.B),
       false.B
     )
     oa.allowRetry := state.s_reissue.getOrElse(false.B)
@@ -1052,6 +1053,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
       }
     }.elsewhen (mp_release_valid) {
       req_released_chiOpcode := mp_release.chiOpcode.get
+      req_released_likelyShared := mp_release.likelyshared.get
       state.s_release := true.B
       state.s_cbwrdata.get := isEvict
       when (isEvict) {
@@ -1312,6 +1314,11 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
   io.status.bits.is_miss := !dirResult.hit
   io.status.bits.is_prefetch := req_prefetch
   io.status.bits.reqSource := req.reqSource
+
+  io.statAlloc.valid := io.alloc.valid
+  io.statAlloc.bits.is_miss := !io.alloc.bits.dirResult.hit
+  io.statAlloc.bits.is_prefetch := io.alloc.bits.task.opcode === Hint
+  io.statAlloc.bits.channel := io.alloc.bits.task.channel
 
   io.msInfo.valid := req_valid
   io.msInfo.bits.set := req.set
