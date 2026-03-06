@@ -589,7 +589,10 @@ class MSHR(implicit p: Parameters) extends L2Module {
   io.msInfo.bits.channel := req.channel
 
   assert(!(c_resp.valid && !io.status.bits.w_c_resp))
-  assert(!(d_resp.valid && !io.status.bits.w_d_resp))
+    when (d_resp.valid && !io.status.bits.w_d_resp) {
+      printf(p"[MSHR_D_RESP_UNEXPECTED] set=0x${Hexadecimal(req.set)} tag=0x${Hexadecimal(req.tag)} req_valid=${req_valid} opcode=${d_resp.bits.opcode} last=${d_resp.bits.last} w_grantlast=${state.w_grantlast} w_grant=${state.w_grant} w_releaseack=${state.w_releaseack} s_refill=${state.s_refill} s_release=${state.s_release} s_probeack=${state.s_probeack} timer=${timer}\n")
+    }
+    assert(!(d_resp.valid && !io.status.bits.w_d_resp))
 
   /* ======== Handling Nested C ======== */
   // for A miss, only when replResp do we finally choose a way, allowing nested C

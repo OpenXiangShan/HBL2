@@ -113,6 +113,7 @@ case class L2Param(
   hartId: Int = 0,
   // Prefetch
   prefetch: Seq[PrefetchParameters] = Nil,
+    disableMatrixPrefetchTrain: Boolean = true,
   // L2 Flush
   enableL2Flush: Boolean = false,
   // Performance analysis

@@ -114,6 +114,9 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
   val l3_sets = 512 // standard 8192
   val l3_ways = 8 // standard 16
 
+  // Keep matrix requests out of L2 prefetch learning when true.
+  val DISABLE_MATRIX_PREFETCH_TRAIN = true
+
   // 2MB L2 Cache with 8 banks
   val l2 = LazyModule(new TL2TLCoupledL2()(baseConfig(1).alter((site, here, up) => {
     case L2ParamKey => L2Param(
@@ -126,11 +129,12 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
       echoField = Seq(DirtyField()),
       prefetch = Seq(BOPParameters(
         rrTableEntries = 16,
-        rrTagBits = 6,
+        rrTagBits = 10,
         streamIsolationEnable = true,
         streamIdBits = 2,
         streamIdBaseBit = 15
       )),
+      disableMatrixPrefetchTrain = DISABLE_MATRIX_PREFETCH_TRAIN,
       // tagECC = Some("secded"),
       // dataECC = Some("secded"),
       enableTagECC = false, //XS use true
@@ -272,18 +276,13 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
     l2.module.io.debugTopDown.robTrueCommit := 0.U
     l2.module.io.debugTopDown.robHeadPaddr.valid := false.B
     l2.module.io.debugTopDown.robHeadPaddr.bits := 0.U
-    //l2.module.io.pfCtrlFromCore := DontCare
-    l2.module.io.pfCtrlFromCore.l2_pf_master_en := true.B
-    l2.module.io.pfCtrlFromCore.l2_pf_recv_en  := true.B
-    l2.module.io.pfCtrlFromCore.l2_pbop_en     := true.B
-    l2.module.io.pfCtrlFromCore.l2_vbop_en     := true.B
-    l2.module.io.pfCtrlFromCore.l2_tp_en       := true.B
-	// // 将这些 true.B 改为 false.B
-	// l2.module.io.pfCtrlFromCore.l2_pf_master_en := false.B // 总开关关掉即可
-	// l2.module.io.pfCtrlFromCore.l2_pf_recv_en  := false.B
-	// l2.module.io.pfCtrlFromCore.l2_pbop_en     := false.B
-	// l2.module.io.pfCtrlFromCore.l2_vbop_en     := false.B
-	// l2.module.io.pfCtrlFromCore.l2_tp_en       := false.B
+    // One switch to disable all L2 prefetch paths, similar to DISABLE_HUGEPAGE in C test.
+    val DISABLE_L2_PREFETCH = false
+    l2.module.io.pfCtrlFromCore.l2_pf_master_en := (if (DISABLE_L2_PREFETCH) false.B else true.B)
+    l2.module.io.pfCtrlFromCore.l2_pf_recv_en := (if (DISABLE_L2_PREFETCH) false.B else true.B)
+    l2.module.io.pfCtrlFromCore.l2_pbop_en := (if (DISABLE_L2_PREFETCH) false.B else true.B)
+    l2.module.io.pfCtrlFromCore.l2_vbop_en := false.B
+    l2.module.io.pfCtrlFromCore.l2_tp_en := (if (DISABLE_L2_PREFETCH) false.B else true.B)
     val matrix_data_out = IO(Vec(l2_banks, DecoupledIO(new MatrixDataBundle())))
     matrix_data_out <> l2.module.io.matrixDataOut512L2
     // For matrix get , l2 return data

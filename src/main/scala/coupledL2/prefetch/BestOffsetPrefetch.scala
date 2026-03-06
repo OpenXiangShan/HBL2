@@ -50,6 +50,8 @@ case class BOPParameters(
   dQEntries: Int = 16,
   dQLatency: Int = 30,
   dQMaxLatency: Int = 512,
+  crossPageBytes: Int = 4 * 1024,
+  crossPageRelaxMaxOffset: Int = 0,
   offsetList: Seq[Int] = Seq(
     // -256, -250, -243, -240, -225, -216, -200,
     // -192, -180, -162, -160, -150, -144, -135, -128,
@@ -57,8 +59,8 @@ case class BOPParameters(
     // -75, -72, -64, -60, -54, -50, -48, -45,
     // -40, -36, -32, -30, -27, -25, -24, -20,
     // -18, -16, -15, -12, -10, -9, -8, -6,
-    -5, -4, -3, -2, -1,
-    1, 2, 3, 4, 5, 6, 8,
+    // -5, -4, -3, -2, -1,
+    // 1, 2, 3, 4, 5, 6, 8,
     9, 10, 12, 15, 16, 18, 20, 24,
     // 25, 27, 30, 32, 36, 40, 45, 48,
     // 50, 54, 60, 64, 72, 75, 80, 81,
@@ -105,6 +107,9 @@ trait HasBOPParams extends HasPrefetcherHelper {
   def dQEntries = bopParams.dQEntries
   def dQLatency = bopParams.dQLatency
   def dQMaxLatency = bopParams.dQMaxLatency
+  def crossPageBytes = bopParams.crossPageBytes
+  def crossPageRelaxMaxOffset = bopParams.crossPageRelaxMaxOffset
+  def crossPageOffsetBits = log2Ceil(crossPageBytes)
 
   def scores = offsetList.length
   def offsetWidth = log2Up(offsetList.max) + 2 // -32 <= offset <= 31
@@ -118,6 +123,8 @@ trait HasBOPParams extends HasPrefetcherHelper {
     "streamId range must be within fullAddrBits")
   require(!streamIsolationEnable || rrTagBits > streamIdxBits,
     "rrTagBits must be larger than streamIdxBits when stream isolation is enabled")
+  require(isPow2(crossPageBytes), "crossPageBytes must be power of 2")
+  require(crossPageOffsetBits >= offsetBits, "crossPageBytes must be larger than or equal to blockBytes")
 
   def signedExtend(x: UInt, width: Int): UInt = {
     if (x.getWidth >= width) {
@@ -133,6 +140,10 @@ trait HasBOPParams extends HasPrefetcherHelper {
     } else {
       0.U(streamIdxBits.W)
     }
+  }
+
+  def getCrossPageTag(addr: UInt): UInt = {
+    addr(addr.getWidth - 1, crossPageOffsetBits)
   }
 }
 
@@ -724,7 +735,7 @@ class VBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
   val s0_oldFullAddr = if(virtualTrain) Cat(io.train.bits.vaddr.getOrElse(0.U), 0.U(offsetBits.W)) else io.train.bits.addr
   val s0_oldFullAddrNoOff = s0_oldFullAddr(s0_oldFullAddr.getWidth-1, offsetBits)
   val s0_newFullAddr = s0_oldFullAddr + signedExtend((prefetchOffset << offsetBits), fullAddrBits)
-  val s0_crossPage = getPPN(s0_newFullAddr) =/= getPPN(s0_oldFullAddr) // unequal tags
+  val s0_crossPage = getCrossPageTag(s0_newFullAddr) =/= getCrossPageTag(s0_oldFullAddr) // unequal tags
   val respFullAddr = if(virtualTrain) Cat(io.resp.bits.vaddr.getOrElse(0.U), 0.U(offsetBits.W))
                  else io.resp.bits.addr - signedExtend((prefetchOffset << offsetBits), fullAddrBits)
 
@@ -855,7 +866,10 @@ class PBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
 
   val req = Reg(new PrefetchReq)
   val req_valid = RegInit(false.B)
-  val crossPage = getPPN(newAddr) =/= getPPN(oldAddr) // unequal tags
+  val crossPage = getCrossPageTag(newAddr) =/= getCrossPageTag(oldAddr) // unequal tags
+  val prefetchOffsetAbs = Mux(prefetchOffset.asSInt < 0.S, (-prefetchOffset.asSInt).asUInt, prefetchOffset.asSInt.asUInt)
+  val smallOffsetCrossPageRelax = if (crossPageRelaxMaxOffset > 0) prefetchOffsetAbs <= crossPageRelaxMaxOffset.U else false.B
+  val crossPageBlocked = crossPage && !smallOffsetCrossPageRelax
   when(io.req.fire) {
     req_valid := false.B
   }
@@ -864,7 +878,7 @@ class PBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
     req.set := parseFullAddress(newAddr)._2
     req.needT := io.train.bits.needT
     req.source := io.train.bits.source
-    req_valid := !crossPage && !prefetchDisable // stop prefetch when prefetch req crosses pages
+    req_valid := !crossPageBlocked && !prefetchDisable // stop prefetch when prefetch req crosses pages
   }
 
   io.pbopCrossPage := crossPage
@@ -881,10 +895,20 @@ class PBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
       XSPerfAccumulate("best_offset_pos_" + off.toString, prefetchOffset === off.U)
     }
   }
+  for (off <- offsetList) {
+    if (off < 0) {
+      XSPerfAccumulate("bop_req_offset_neg_" + (-off).toString,
+        io.req.fire && prefetchOffset === off.S(offsetWidth.W).asUInt)
+    } else {
+      XSPerfAccumulate("bop_req_offset_pos_" + off.toString,
+        io.req.fire && prefetchOffset === off.U)
+    }
+  }
   XSPerfAccumulate("bop_req", io.req.fire)
   XSPerfAccumulate("bop_train", io.train.fire)
   XSPerfAccumulate("bop_resp", io.resp.fire)
   XSPerfAccumulate("bop_train_stall_for_st_not_ready", io.train.valid && !scoreTable.io.req.ready)
-  XSPerfAccumulate("bop_drop_for_cross_page", scoreTable.io.req.fire && crossPage)
+  XSPerfAccumulate("bop_drop_for_cross_page", scoreTable.io.req.fire && crossPageBlocked)
+  XSPerfAccumulate("bop_cross_page_relaxed", scoreTable.io.req.fire && crossPage && smallOffsetCrossPageRelax)
   XSPerfAccumulate("bop_drop_for_disable", scoreTable.io.req.fire && prefetchDisable)
 }
