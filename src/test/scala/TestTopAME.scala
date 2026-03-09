@@ -115,7 +115,8 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
   val l3_ways = 8 // standard 16
 
   // Keep matrix requests out of L2 prefetch learning when true.
-  val DISABLE_MATRIX_PREFETCH_TRAIN = true
+  val DISABLE_MATRIX_PREFETCH_TRAIN = false
+  val DISABLE_NON_MATRIX_PREFETCH_TRAIN = true
 
   // 2MB L2 Cache with 8 banks
   val l2 = LazyModule(new TL2TLCoupledL2()(baseConfig(1).alter((site, here, up) => {
@@ -135,6 +136,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
         streamIdBaseBit = 15
       )),
       disableMatrixPrefetchTrain = DISABLE_MATRIX_PREFETCH_TRAIN,
+      disableNonMatrixPrefetchTrain = DISABLE_NON_MATRIX_PREFETCH_TRAIN,
       // tagECC = Some("secded"),
       // dataECC = Some("secded"),
       enableTagECC = false, //XS use true
