@@ -14,10 +14,11 @@ import freechips.rocketchip.tilelink.TLPermissions._
 // -----------------------
 // | IN | OPCODE  | OUT |
 // =======================
-// | A  | Acquire | A   |
-// | A  | Get     | A   |
-// | A  | Put     | C   |
-// | C  | Release | C   |  higher priv
+// | A  | Acquire  | A   |
+// | A  | Get      | A   |
+// | A  | Put      | C   |
+// | C  | ProbeAck | C   |  higher priv?
+// | C  | Release  | C   |  higher priv?
 // -----------------------
 class SinkMX(implicit p: Parameters) extends L2Module {
   val io = IO(new Bundle() {
@@ -47,9 +48,13 @@ class SinkMX(implicit p: Parameters) extends L2Module {
   val a = io.a.bits
   val c = io.c.bits
 
+  // TODO: only PutFull considered for now
+  val hasPendingPut = RegInit(false.B)
+  val (first, last, _, _) = edgeIn.count(io.a)
+
   // Determine out_a.valid:
   // 1. if a is not a matrix put, flow io.a to out_a
-  // 2. if a is a matrix put, and in_c is not valid, flow io.a to out_c, handled above
+  // 2. if a is a matrix put, and in_c is not valid, flow io.a to out_c
   // 3. if a is a matrix put, and in_c is valid, stall a
 
   // Handle MatrixGet
@@ -82,15 +87,23 @@ class SinkMX(implicit p: Parameters) extends L2Module {
     }
   }
 
+  when (io.a.valid && isMatrixPut(a) && io.c.ready) {
+    when (first && !io.c.valid) {
+      hasPendingPut := true.B
+    }.elsewhen (last && hasPendingPut) {
+      hasPendingPut := false.B
+    }
+  }
+
   // Connect output signals
   io.out_a <> out_a
   io.out_c <> out_c
 
   // Handle ready signals
-  // io.a.ready := out_a.ready
-  io.c.ready := out_c.ready
+  io.c.ready := Mux(hasPendingPut, false.B, out_c.ready)
   // Bypass channel A matrix put to C, but stalled for original C channel requests.
   // TODO: it is not recommended to use input valid to drive input ready,
   // might cause longer path, unfriendly to timing
-  io.a.ready := Mux(isMatrixPut(a), io.out_c.ready && !io.c.valid, io.out_a.ready)
+  io.a.ready := Mux(hasPendingPut, io.out_c.ready,
+    Mux(isMatrixPut(a), io.out_c.ready && !io.c.valid, io.out_a.ready))
 }
