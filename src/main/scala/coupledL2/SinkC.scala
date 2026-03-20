@@ -198,11 +198,18 @@ class SinkC(implicit p: Parameters) extends L2Module {
   }
 
   // Performance counters
+  val cMatrixKey = io.c.bits.user.lift(MatrixKey).getOrElse(false.B)
+  val cMatrixReq = io.c.valid && MatrixInfo.isMatrix(cMatrixKey)
+  val cMatrixFire = io.c.fire && MatrixInfo.isMatrix(cMatrixKey)
+  val sinkCTaskRemapToAPut = io.task.fire && io.task.bits.matrixTask && io.task.bits.channel === "b001".U && io.task.bits.opcode === PutFullData
   val stall = io.c.valid && isRelease && !io.c.ready
   XSPerfAccumulate("sinkC_c_stall", stall)
   XSPerfAccumulate("sinkC_c_stall_for_noSpace", stall && hasData && first && full)
   XSPerfAccumulate("sinkC_toReqArb_stall", io.task.valid && !io.task.ready)
   XSPerfAccumulate("sinkC_buf_full", full)
+  XSPerfAccumulate("sinkC_matrix_req_valid", cMatrixReq)
+  XSPerfAccumulate("sinkC_matrix_fire", cMatrixFire)
+  XSPerfAccumulate("sinkC_matrix_remap_to_a_put_task_fire", sinkCTaskRemapToAPut)
 
   XSPerfAccumulate("NewDataNestC", io.refillBufWrite.valid)
   //!!WARNING: TODO: if this is zero, that means fucntion [Release-new-data written into refillBuf]

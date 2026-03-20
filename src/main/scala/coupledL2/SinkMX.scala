@@ -41,6 +41,11 @@ class SinkMX(implicit p: Parameters) extends L2Module {
     a.opcode === Get && isMatrix
   }
 
+  val matrixPutInValid = io.a.valid && isMatrixPut(io.a.bits)
+  val matrixPutBlockedByC = matrixPutInValid && io.c.valid
+  val matrixPutRerouteFire = io.out_c.fire && matrixPutInValid && !io.c.valid
+  val matrixPutNativeAFire = io.out_a.fire && matrixPutInValid
+
   val out_a = WireInit(io.a)
   val out_c = WireInit(io.c)
 
@@ -93,4 +98,8 @@ class SinkMX(implicit p: Parameters) extends L2Module {
   // TODO: it is not recommended to use input valid to drive input ready,
   // might cause longer path, unfriendly to timing
   io.a.ready := Mux(isMatrixPut(a), io.out_c.ready && !io.c.valid, io.out_a.ready)
+  XSPerfAccumulate("sinkMX_matrix_put_in_valid", matrixPutInValid)
+  XSPerfAccumulate("sinkMX_matrix_put_blocked_by_c", matrixPutBlockedByC)
+  XSPerfAccumulate("sinkMX_matrix_put_reroute_c_fire", matrixPutRerouteFire)
+  XSPerfAccumulate("sinkMX_matrix_put_native_a_fire", matrixPutNativeAFire)
 }

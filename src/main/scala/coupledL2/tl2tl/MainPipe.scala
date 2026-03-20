@@ -513,17 +513,21 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
     train =>
       // train on request(with needHint flag) miss or hit on prefetched block
       // trigger train also in a_merge here
-      train.valid := task_s3.valid && (!cacheParams.disableMatrixPrefetchTrain.B || !req_s3.matrixTask) && (!cacheParams.disableNonMatrixPrefetchTrain.B || req_s3.matrixTask) && (((req_acquire_s3 || req_get_s3) && req_s3.needHint.getOrElse(false.B) &&
-        (!dirResult_s3.hit || meta_s3.prefetch.get)) || req_s3.mergeA)
+      train.valid := (task_s3.valid && (!cacheParams.disableMatrixPrefetchTrain.B || !req_s3.matrixTask) && (!cacheParams.disableNonMatrixPrefetchTrain.B || req_s3.matrixTask) && (((req_acquire_s3 || req_get_s3) && req_s3.needHint.getOrElse(false.B) && (!dirResult_s3.hit || meta_s3.prefetch.get)) || req_s3.mergeA)) ||
+        (task_s3.valid && !cacheParams.disableMatrixPrefetchTrain.B && req_s3.matrixTask && req_s3.opcode === PutFullData)
       train.bits.tag := req_s3.tag
       train.bits.set := req_s3.set
       train.bits.needT := Mux(req_s3.mergeA, needT(req_s3.aMergeTask.opcode, req_s3.aMergeTask.param),req_needT_s3)
+      train.bits.isPut := Mux(req_s3.mergeA,
+        req_s3.aMergeTask.opcode === PutFullData || req_s3.aMergeTask.opcode === PutPartialData,
+        req_s3.opcode === PutFullData || req_s3.opcode === PutPartialData
+      )
       train.bits.source := Mux(req_s3.mergeA, req_s3.aMergeTask.sourceId, req_s3.sourceId)
       train.bits.vaddr.foreach(_ := Mux(req_s3.mergeA, req_s3.aMergeTask.vaddr.getOrElse(0.U), req_s3.vaddr.getOrElse(0.U)))
       train.bits.hit := Mux(req_s3.mergeA, true.B, dirResult_s3.hit)
       train.bits.prefetched := Mux(req_s3.mergeA, true.B, meta_s3.prefetch.getOrElse(false.B))
       train.bits.pfsource := meta_s3.prefetchSrc.getOrElse(PfSource.NoWhere.id.U) // TODO
-      train.bits.reqsource := req_s3.reqSource
+      train.bits.reqsource := Mux(req_s3.matrixTask, MemReqSource.CPUMatrixData.id.U, req_s3.reqSource)
   }
 
   /* ======== Stage 4 ======== */

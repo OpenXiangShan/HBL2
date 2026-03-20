@@ -715,6 +715,10 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
         needT(req_s3.aMergeTask.opcode, req_s3.aMergeTask.param),
         req_needT_s3
       )
+      train.bits.isPut := Mux(req_s3.mergeA,
+        req_s3.aMergeTask.opcode === PutFullData || req_s3.aMergeTask.opcode === PutPartialData,
+        req_s3.opcode === PutFullData || req_s3.opcode === PutPartialData
+      )
       train.bits.source := Mux(req_s3.mergeA, req_s3.aMergeTask.sourceId, req_s3.sourceId)
       train.bits.vaddr.foreach(_ := Mux(req_s3.mergeA, req_s3.aMergeTask.vaddr.getOrElse(0.U), req_s3.vaddr.getOrElse(0.U)))
       train.bits.hit := Mux(req_s3.mergeA, true.B, dirResult_s3.hit)

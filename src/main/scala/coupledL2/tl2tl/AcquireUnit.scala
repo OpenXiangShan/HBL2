@@ -23,7 +23,7 @@ import utility._
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.tilelink.TLMessages._
 import org.chipsalliance.cde.config.Parameters
-import huancun.{DirtyKey, PreferCacheKey}
+import huancun.{DirtyKey, PreferCacheKey, PrefetchKey}
 import coupledL2._
 
 class AcquireUnit(implicit p: Parameters) extends L2Module {
@@ -45,10 +45,20 @@ class AcquireUnit(implicit p: Parameters) extends L2Module {
   a.bits.echo.lift(DirtyKey).foreach(_ := true.B)
   a.bits.user.lift(PreferCacheKey).foreach(_ := false.B)
   a.bits.user.lift(utility.ReqSourceKey).foreach(_ := task.reqSource)
+  val fromL2PrefetchSrc = task.reqSource === MemReqSource.Prefetch2L2BOP.id.U ||
+    task.reqSource === MemReqSource.Prefetch2L2PBOP.id.U ||
+    task.reqSource === MemReqSource.Prefetch2L2SMS.id.U ||
+    task.reqSource === MemReqSource.Prefetch2L2Stream.id.U ||
+    task.reqSource === MemReqSource.Prefetch2L2Stride.id.U ||
+    task.reqSource === MemReqSource.Prefetch2L2TP.id.U ||
+    task.reqSource === MemReqSource.Prefetch2L2Unknown.id.U
+  a.bits.user.lift(PrefetchKey).foreach(_ := fromL2PrefetchSrc)
   a.bits.corrupt := false.B
 
   a.valid := io.task.valid
   io.task.ready := a.ready
+
+  XSPerfAccumulate("l2prefetch_to_l3_issue", a.fire && fromL2PrefetchSrc)
 
   dontTouch(io)
 }

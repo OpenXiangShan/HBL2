@@ -93,6 +93,10 @@ class MSHRCtl(implicit p: Parameters) extends L2Module with HasPerfEvents {
 
     /* for TopDown */
     val l2Miss = Output(Bool())
+    /* prefetch throttle: block prefetch when MSHR occupation >= 75% */
+    val prefetchBlock = Output(Bool())
+    val prefetchBlock50 = Output(Bool())
+    val prefetchMshrUsed = Output(UInt(log2Ceil(mshrsAll + 1).W))
   })
 
   val mshrs = Seq.fill(mshrsAll) { Module(new MSHR()) }
@@ -102,6 +106,12 @@ class MSHRCtl(implicit p: Parameters) extends L2Module with HasPerfEvents {
   val mshrCount = PopCount(Cat(mshrs.map(_.io.status.valid)))
   val mshrFull = pipeReqCount + mshrCount >= mshrsAll.U
   val a_mshrFull = pipeReqCount + mshrCount >= (mshrsAll-1).U // the last idle mshr should not be allocated for channel A req
+  val prefetchMshrBlock = pipeReqCount + mshrCount >= (mshrsAll * 3 / 4).U
+  io.prefetchBlock := prefetchMshrBlock
+  val prefetchMshrBlock50 = pipeReqCount + mshrCount >= (mshrsAll / 2).U
+  io.prefetchBlock50 := prefetchMshrBlock50
+  val prefetchMshrUsedRaw = pipeReqCount +& mshrCount
+  io.prefetchMshrUsed := Mux(prefetchMshrUsedRaw > mshrsAll.U, mshrsAll.U, prefetchMshrUsedRaw)
   val mshrSelector = Module(new MSHRSelector())
   mshrSelector.io.idle := mshrs.map(m => !m.io.status.valid)
   val selectedMSHROH = mshrSelector.io.out.bits

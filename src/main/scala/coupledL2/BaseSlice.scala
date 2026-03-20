@@ -34,6 +34,8 @@ abstract class BaseSliceIO[T_OUT <: BaseOuterBundle](implicit p: Parameters) ext
   val matrixDataOut = DecoupledIO(new MatrixDataBundle())
   val l1Hint = DecoupledIO(new L2ToL1Hint())
   val prefetch = prefetchOpt.map(_ => Flipped(new PrefetchIO))
+  val prefetchMshrPressure50 = Output(Bool())
+  val prefetchMshrUsed = Output(UInt(log2Ceil(mshrsAll + 1).W))
   // val msStatus = topDownOpt.map(_ => Vec(mshrsAll, ValidIO(new MSHRStatus)))
   val dirResult = topDownOpt.map(_ => ValidIO(new DirResult))
   val latePF = topDownOpt.map(_ => Output(Bool()))

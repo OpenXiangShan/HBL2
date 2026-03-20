@@ -25,7 +25,7 @@ import freechips.rocketchip.util._
 import org.chipsalliance.cde.config.Field
 import huancun.{AliasKey, CacheParameters, IsHitKey, PrefetchKey}
 import coupledL2.prefetch._
-import utility.{MemReqSource, ReqSourceKey, Code}
+import utility.{MemReqSource, ReqSourceKey, ReqSourceField, Code}
 
 case object EnableCHI extends Field[Boolean](false)
 
@@ -95,7 +95,7 @@ case class L2Param(
 
   // Client
   echoField: Seq[BundleFieldBase] = Nil,
-  reqField: Seq[BundleFieldBase] = Nil,
+  reqField: Seq[BundleFieldBase] = Seq(ReqSourceField()),
   respKey: Seq[BundleKeyBase] = Seq(IsHitKey),
   // Manager
   reqKey: Seq[BundleKeyBase] = Seq(AliasKey, VaddrKey, PrefetchKey, ReqSourceKey, MatrixKey, AmeChannelKey, AmeIndexKey),
@@ -113,7 +113,7 @@ case class L2Param(
   hartId: Int = 0,
   // Prefetch
   prefetch: Seq[PrefetchParameters] = Nil,
-  disableMatrixPrefetchTrain: Boolean = true,
+  disableMatrixPrefetchTrain: Boolean = false,
   disableNonMatrixPrefetchTrain: Boolean = false,
   // L2 Flush
   enableL2Flush: Boolean = false,

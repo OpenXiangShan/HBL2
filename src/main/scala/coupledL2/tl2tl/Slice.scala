@@ -133,6 +133,8 @@ class Slice()(implicit p: Parameters) extends BaseSlice[OuterBundle] {
   io.l1Hint.bits.isKeyword := mainPipe.io.l1Hint.bits.isKeyword
   mainPipe.io.l1Hint.ready := io.l1Hint.ready
   mshrCtl.io.grantStatus := grantBuf.io.grantStatus
+  io.prefetchMshrPressure50 := mshrCtl.io.prefetchBlock
+  io.prefetchMshrUsed := mshrCtl.io.prefetchMshrUsed
 
   grantBuf.io.d_task <> mainPipe.io.toSourceD
 
@@ -144,13 +146,18 @@ class Slice()(implicit p: Parameters) extends BaseSlice[OuterBundle] {
   io.prefetch.foreach {
     p =>
       p.train <> mainPipe.io.prefetchTrain.get
-      sinkA.io.prefetchReq.get <> p.req
+        sinkA.io.prefetchReq.get.valid := p.req.valid
+        sinkA.io.prefetchReq.get.bits := p.req.bits
+        p.req.ready := sinkA.io.prefetchReq.get.ready
       p.resp <> grantBuf.io.prefetchResp.get
       p.tlb_req.req.ready := true.B
       p.tlb_req.resp.valid := false.B
       p.tlb_req.resp.bits := DontCare
       p.tlb_req.pmp_resp := DontCare
       p.recv_addr := 0.U.asTypeOf(p.recv_addr)
+      p.mshrPressure50 := io.prefetchMshrPressure50
+      p.mshrUsed := io.prefetchMshrUsed
+      p.matrixSinkANormalReqStall := reqArb.io.sinkANormalReqStall
   }
 
   /* input & output signals */
@@ -162,7 +169,7 @@ class Slice()(implicit p: Parameters) extends BaseSlice[OuterBundle] {
   sinkMX.io.a <> inBuf.a(io.in.a)
   sinkMX.io.c <> inBuf.c(io.in.c)
   sinkA.io.a <> sinkMX.io.out_a
-  sinkC.io.c <> sinkMX.io.out_c
+    sinkC.io.c <> sinkMX.io.out_c
   // sinkA.io.a <> inBuf.a(io.in.a)
   // inBuf.a(io.in.a).bits.user.lift(MatrixKey).getOrElse(0.U)
   io.in.b <> inBuf.b(mshrCtl.io.sourceB)

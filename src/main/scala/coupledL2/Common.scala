@@ -31,6 +31,7 @@ class ReplacerInfo(implicit p: Parameters) extends L2Bundle {
   val channel = UInt(3.W)
   val opcode = UInt(3.W)
   val reqSource = UInt(MemReqSource.reqSourceBits.W)
+  val matrixTask = Bool()
   val refill_prefetch = Bool()
 }
 

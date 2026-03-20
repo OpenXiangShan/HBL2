@@ -19,6 +19,7 @@ package coupledL2
 import org.chipsalliance.cde.config.Parameters
 import chisel3._
 import chisel3.util._
+import freechips.rocketchip.tilelink.TLMessages
 import coupledL2.prefetch.PfSource
 import coupledL2.utils._
 import coupledL2.tl2tl.MSHRStatus
@@ -105,6 +106,31 @@ class TopDownMonitor()(implicit p: Parameters) extends L2Module {
     XSPerfAccumulate(s"E2_${cacheParams.name}AReqSource_${sourceName}_Total", PopCount(sourceMatchVec))
     XSPerfAccumulate(s"E2_${cacheParams.name}AReqSource_${sourceName}_Miss", PopCount(sourceMatchVecMiss))
   }
+
+  val matrixReadVec = dirResultMatchVec(
+    r => r.replacerInfo.matrixTask &&
+      (r.replacerInfo.opcode === TLMessages.Get || r.replacerInfo.opcode === TLMessages.AcquireBlock)
+  )
+  val matrixReadMissVec = dirResultMatchVec(
+    r => r.replacerInfo.matrixTask && !r.hit &&
+      (r.replacerInfo.opcode === TLMessages.Get || r.replacerInfo.opcode === TLMessages.AcquireBlock)
+  )
+  val matrixStoreVec = dirResultMatchVec(
+    r => r.replacerInfo.matrixTask &&
+      (r.replacerInfo.opcode === TLMessages.AcquirePerm ||
+        r.replacerInfo.opcode === TLMessages.PutFullData ||
+        r.replacerInfo.opcode === TLMessages.PutPartialData)
+  )
+  val matrixStoreMissVec = dirResultMatchVec(
+    r => r.replacerInfo.matrixTask && !r.hit &&
+      (r.replacerInfo.opcode === TLMessages.AcquirePerm ||
+        r.replacerInfo.opcode === TLMessages.PutFullData ||
+        r.replacerInfo.opcode === TLMessages.PutPartialData)
+  )
+  XSPerfAccumulate(s"E2_${cacheParams.name}MatrixRead_Total", PopCount(matrixReadVec))
+  XSPerfAccumulate(s"E2_${cacheParams.name}MatrixRead_Miss", PopCount(matrixReadMissVec))
+  XSPerfAccumulate(s"E2_${cacheParams.name}MatrixStore_Total", PopCount(matrixStoreVec))
+  XSPerfAccumulate(s"E2_${cacheParams.name}MatrixStore_Miss", PopCount(matrixStoreMissVec))
 
   /* ====== MISC ======
    * Some performance counters need to be aggregated among slices. For convenience, they are defined here

@@ -26,7 +26,7 @@
 
 package coupledL2.prefetch
 
-import utility.{ChiselDB, Constantin, MemReqSource, ParallelPriorityMux, RRArbiterInit, SRAMTemplate, XSPerfAccumulate, XSPerfHistogram}
+import utility.{ChiselDB, Constantin, MemReqSource, ParallelPriorityMux, RRArbiterInit, SRAMTemplate, XSPerfAccumulate}
 import org.chipsalliance.cde.config.Parameters
 import chisel3.DontCare.:=
 import chisel3._
@@ -40,7 +40,7 @@ case class BOPParameters(
   virtualTrain: Boolean = true,
   rrTableEntries: Int = 256,
   rrTagBits:      Int = 12,
-  streamIsolationEnable: Boolean = false,
+  streamIsolationEnable: Boolean = true,
   streamIdBits: Int = 2,
   streamIdBaseBit: Int = 15,
   scoreBits:      Int = 5,
@@ -425,8 +425,6 @@ class BopReqBufferEntry(implicit p: Parameters) extends BOPBundle {
     req.needT := needT
     req.source := source
     req.pfSource := MemReqSource.Prefetch2L2BOP.id.U
-    req.routeBySliceId := false.B
-    req.targetSlice := 0.U
     req
   }
 
@@ -813,8 +811,6 @@ class VBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
     io.req.bits.needT := s1_needT
     io.req.bits.source := s1_source
     io.req.bits.pfSource := MemReqSource.Prefetch2L2BOP.id.U
-    io.req.bits.routeBySliceId := false.B
-    io.req.bits.targetSlice := 0.U
     io.req.bits.isBOP := true.B
   }
 
@@ -846,9 +842,7 @@ class PBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
     val req = DecoupledIO(new PrefetchReq)
     val resp = Flipped(DecoupledIO(new PrefetchResp))
     val matrixMshrPressure = Input(Bool())
-    val matrixMshrUsed = Input(UInt(log2Ceil((1 << bankBits) * mshrsAll + 1).W))
     val matrixQueuePressure = Input(Bool())
-    val matrixSinkANormalReqStall = Input(Bool())
   })
 
   // 0 / 1: whether to enable
@@ -864,10 +858,7 @@ class PBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
   val scoreTable = Module(new OffsetScoreTable("pbop"))
 
   // === Matrix path: conservative offsets ===
-  val matrixOffsetList = Seq(
-    1, 2, 3, 4, 5, 6, 8,
-    9, 10, 12, 15, 16, 18, 20, 24,
-    25, 27, 30, 32, 36, 40, 45, 48)
+  val matrixOffsetList = Seq(2, 4, 8, 12, 16)
   val pMatrix = p.alterPartial({
     case L2ParamKey => p(L2ParamKey).copy(prefetch = Seq(bopParams.copy(
       offsetList = matrixOffsetList
@@ -910,18 +901,11 @@ class PBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
   val req = Reg(new PrefetchReq)
   val req_valid = RegInit(false.B)
   val req_is_matrix = RegInit(false.B)
-  val req_offset = RegInit(0.U(prefetchOffset.getWidth.W))
-  val matrixOffsetStatWidth = scoreTableMatrix.io.prefetchOffset.getWidth
+  val req_offset = RegInit(0.U(offsetWidth.W))
   val mxIssueDiv = Constantin.createRecord("pbop_mx_issue_div", BigInt(2))
   val mxIssueCtr = RegInit(0.U(4.W))
-  val mxPressureBypassDiv = Constantin.createRecord("pbop_mx_pressure_bypass_div", BigInt(16))
+  val mxPressureBypassDiv = Constantin.createRecord("pbop_mx_pressure_bypass_div", BigInt(8))
   val mxPressureBypassCtr = RegInit(0.U(4.W))
-  val mxHotIssueDiv = Constantin.createRecord("pbop_mx_hot_issue_div", BigInt(2))
-  val mxHotThreshold = Constantin.createRecord("pbop_mx_hot_threshold", BigInt(28))
-  val mxPressureScoreInc = Constantin.createRecord("pbop_mx_pressure_score_inc", BigInt(1))
-  val mxPressureScoreDec = Constantin.createRecord("pbop_mx_pressure_score_dec", BigInt(2))
-  val mxPressureScore = RegInit(0.U(6.W))
-  val mxHotCtr = RegInit(0.U(4.W))
   val crossPage = getCrossPageTag(newAddr) =/= getCrossPageTag(oldAddr)
   val prefetchOffsetAbs = Mux(prefetchOffset.asSInt < 0.S, (-prefetchOffset.asSInt).asUInt, prefetchOffset.asSInt.asUInt)
   val smallOffsetCrossPageRelax = if (crossPageRelaxMaxOffset > 0) prefetchOffsetAbs <= crossPageRelaxMaxOffset.U else false.B
@@ -936,54 +920,26 @@ class PBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
   val mxRateBlocked = WireInit(false.B)
   val mxPressureBlocked = WireInit(false.B)
   val mxPressureBypassBlocked = WireInit(false.B)
-  val mxHotBlocked = WireInit(false.B)
-  val mxSinkANormalReqStallBlocked = WireInit(false.B)
-
-  // Track recent matrix pressure and only tighten issue rate when pressure keeps accumulating.
-  when(io.train.valid && isMatrixTrain) {
-    val pressureNow = io.matrixMshrPressure || io.matrixQueuePressure
-    val inc = mxPressureScoreInc(5, 0)
-    val dec = mxPressureScoreDec(5, 0)
-    when(pressureNow) {
-      val nxt = mxPressureScore + inc
-      mxPressureScore := Mux(nxt < mxPressureScore, Fill(6, 1.U(1.W)), nxt)
-    }.otherwise {
-      mxPressureScore := Mux(mxPressureScore > dec, mxPressureScore - dec, 0.U)
-    }
-  }
 
   when(anyScoreTableFire) {
     req.tag := parseFullAddress(newAddr)._1
     req.set := parseFullAddress(newAddr)._2
     req.needT := io.train.bits.needT
     req.source := io.train.bits.source
-    req.routeBySliceId := false.B
-    req.targetSlice := 0.U
     req_is_matrix := isMatrixTrain
     req_offset := prefetchOffset
 
     val matrixRateAllow = !isMatrixTrain || (mxIssueCtr === 0.U)
-    val hotThreshold = mxHotThreshold(5, 0)
-    val matrixHot = mxPressureScore >= hotThreshold
-    val hotIssueDiv = Mux(mxHotIssueDiv === 0.U, 1.U, mxHotIssueDiv)
-    val matrixHotAllow = !isMatrixTrain || !matrixHot || (mxHotCtr === 0.U)
     mxRateBlocked := isMatrixTrain && !matrixRateAllow
     mxMshrBlocked := isMatrixTrain && io.matrixMshrPressure
     mxQueueBlocked := isMatrixTrain && io.matrixQueuePressure
     mxPressureBlocked := mxMshrBlocked || mxQueueBlocked
-    mxHotBlocked := isMatrixTrain && matrixHot && !matrixHotAllow
-    mxSinkANormalReqStallBlocked := false.B
     val pressureBypassDiv = Mux(mxPressureBypassDiv === 0.U, 1.U, mxPressureBypassDiv)
     val pressureBypassAllow = !mxPressureBlocked || (mxPressureBypassCtr === 0.U)
     mxPressureBypassBlocked := mxPressureBlocked && !pressureBypassAllow
 
     when(isMatrixTrain) {
       mxIssueCtr := Mux(mxIssueCtr >= (mxIssueDiv - 1.U), 0.U, mxIssueCtr + 1.U)
-      when(matrixHot) {
-        mxHotCtr := Mux(mxHotCtr >= (hotIssueDiv - 1.U), 0.U, mxHotCtr + 1.U)
-      }.otherwise {
-        mxHotCtr := 0.U
-      }
       when(mxPressureBlocked) {
         mxPressureBypassCtr := Mux(mxPressureBypassCtr >= (pressureBypassDiv - 1.U), 0.U, mxPressureBypassCtr + 1.U)
       }.otherwise {
@@ -991,7 +947,7 @@ class PBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
       }
     }
 
-      req_valid := !crossPageBlocked && !prefetchDisable && matrixRateAllow && matrixHotAllow && !mxPressureBypassBlocked 
+      req_valid := !crossPageBlocked && !prefetchDisable && matrixRateAllow && !mxPressureBypassBlocked
   }
 
   io.pbopCrossPage := crossPage
@@ -1014,48 +970,22 @@ class PBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
   for (off <- offsetList) {
     if (off < 0) {
       XSPerfAccumulate("bop_req_offset_neg_" + (-off).toString,
-        io.req.fire && req_offset === off.S(req_offset.getWidth.W).asUInt)
+        io.req.fire && req_offset === off.S(offsetWidth.W).asUInt)
     } else {
       XSPerfAccumulate("bop_req_offset_pos_" + off.toString,
-        io.req.fire && req_offset === off.U(req_offset.getWidth.W))
+        io.req.fire && req_offset === off.U)
     }
   }
   for (off <- offsetList) {
     if (off > 0) {
       XSPerfAccumulate("best_offset_pos_" + off.toString + "_normal", scoreTable.io.prefetchOffset === off.U)
-      XSPerfAccumulate("bop_req_offset_pos_" + off.toString + "_normal", io.req.fire && !req_is_matrix && req_offset === off.U(req_offset.getWidth.W))
+      XSPerfAccumulate("bop_req_offset_pos_" + off.toString + "_normal", io.req.fire && !req_is_matrix && req_offset === off.U)
     }
   }
   for (off <- matrixOffsetList) {
-    if (off < 0) {
-      XSPerfAccumulate("best_offset_neg_" + (-off).toString + "_matrix",
-        scoreTableMatrix.io.prefetchOffset === off.S(matrixOffsetStatWidth.W).asUInt)
-      XSPerfAccumulate("bop_req_offset_neg_" + (-off).toString + "_matrix",
-        io.req.fire && req_is_matrix && req_offset === off.S(req_offset.getWidth.W).asUInt)
-    } else {
-      XSPerfAccumulate("best_offset_pos_" + off.toString + "_matrix",
-        scoreTableMatrix.io.prefetchOffset === off.U(matrixOffsetStatWidth.W))
-      XSPerfAccumulate("bop_req_offset_pos_" + off.toString + "_matrix",
-        io.req.fire && req_is_matrix && req_offset === off.U(req_offset.getWidth.W))
-    }
+    XSPerfAccumulate("best_offset_pos_" + off.toString + "_matrix", scoreTableMatrix.io.prefetchOffset.pad(offsetWidth) === off.U)
+    XSPerfAccumulate("bop_req_offset_pos_" + off.toString + "_matrix", io.req.fire && req_is_matrix && req_offset === off.U)
   }
-  val matrixOff2Candidate = anyScoreTableFire && isMatrixTrain && prefetchOffset === 2.U
-  val matrixOff2GatedPass = matrixOff2Candidate && !crossPageBlocked && !prefetchDisable && !mxRateBlocked && !mxHotBlocked && !mxPressureBypassBlocked 
-  val matrixOff2ReqValid = io.req.valid && req_is_matrix && req_offset === 2.U
-  val matrixOff2ReqFire = io.req.fire && req_is_matrix && req_offset === 2.U
-  XSPerfAccumulate("bop_off2_matrix_candidate", matrixOff2Candidate)
-  XSPerfAccumulate("bop_off2_matrix_pass_all_gates", matrixOff2GatedPass)
-  XSPerfAccumulate("bop_off2_matrix_drop_cross_page", matrixOff2Candidate && crossPageBlocked)
-  XSPerfAccumulate("bop_off2_matrix_drop_disable", matrixOff2Candidate && prefetchDisable)
-  XSPerfAccumulate("bop_off2_matrix_drop_rate_limit", matrixOff2Candidate && mxRateBlocked)
-  XSPerfAccumulate("bop_off2_matrix_drop_hot_pressure", matrixOff2Candidate && mxHotBlocked)
-  XSPerfAccumulate("bop_off2_matrix_drop_sinkA_normal_stall", matrixOff2Candidate && mxSinkANormalReqStallBlocked)
-  XSPerfAccumulate("bop_off2_matrix_drop_mshr_pressure", matrixOff2Candidate && io.matrixMshrPressure && mxPressureBypassBlocked)
-  XSPerfAccumulate("bop_off2_matrix_drop_queue_pressure", matrixOff2Candidate && io.matrixQueuePressure && mxPressureBypassBlocked)
-  XSPerfAccumulate("bop_off2_matrix_pressure_bypass_issue", matrixOff2Candidate && mxPressureBlocked && !mxPressureBypassBlocked)
-  XSPerfAccumulate("bop_off2_matrix_req_valid", matrixOff2ReqValid)
-  XSPerfAccumulate("bop_off2_matrix_req_fire", matrixOff2ReqFire)
-  XSPerfAccumulate("bop_off2_matrix_req_blocked_by_downstream", matrixOff2ReqValid && !io.req.ready)
   XSPerfAccumulate("bop_req", io.req.fire)
   XSPerfAccumulate("bop_train", io.train.fire)
   XSPerfAccumulate("bop_train_normal", io.train.fire && !isMatrixTrain)
@@ -1069,12 +999,6 @@ class PBestOffsetPrefetch(implicit p: Parameters) extends BOPModule {
   XSPerfAccumulate("bop_drop_for_matrix_mshr_pressure", anyScoreTableFire && isMatrixTrain && io.matrixMshrPressure && mxPressureBypassBlocked)
   XSPerfAccumulate("bop_matrix_pressure_bypass_issue", anyScoreTableFire && isMatrixTrain && mxPressureBlocked && !mxPressureBypassBlocked)
   XSPerfAccumulate("bop_drop_for_matrix_queue_pressure", anyScoreTableFire && isMatrixTrain && io.matrixQueuePressure && mxPressureBypassBlocked)
-  XSPerfAccumulate("bop_drop_for_matrix_hot_pressure", anyScoreTableFire && isMatrixTrain && mxHotBlocked)
-  XSPerfAccumulate("bop_drop_for_matrix_sinkA_normal_stall", anyScoreTableFire && isMatrixTrain && mxSinkANormalReqStallBlocked)
-    XSPerfAccumulate("bop_matrix_gate_sinkA_stall_candidate", anyScoreTableFire && isMatrixTrain)
-    XSPerfAccumulate("bop_matrix_gate_sinkA_stall_blocked", anyScoreTableFire && isMatrixTrain && mxSinkANormalReqStallBlocked)
-    XSPerfAccumulate("bop_matrix_gate_sinkA_stall_passed", anyScoreTableFire && isMatrixTrain )
-  XSPerfAccumulate("bop_matrix_hot_state", mxPressureScore >= mxHotThreshold(5, 0))
   XSPerfAccumulate("bop_req_normal", io.req.fire && !req_is_matrix)
   XSPerfAccumulate("bop_req_matrix", io.req.fire && req_is_matrix)
   XSPerfAccumulate("bop_resp_normal", 0.U(1.W).asBool)

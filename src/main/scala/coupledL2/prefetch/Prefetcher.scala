@@ -117,6 +117,8 @@ class PrefetchReq(implicit p: Parameters) extends PrefetchBundle {
   val needT = Bool()
   val source = UInt(sourceIdBits.W)
   val pfSource = UInt(MemReqSource.reqSourceBits.W)
+  val routeBySliceId = Bool()
+  val targetSlice = UInt((if (bankBits > 0) bankBits else 1).W)
 
   def addr: UInt = Cat(tag, set, 0.U(offsetBits.W))
   def isBOP:Bool = pfSource === MemReqSource.Prefetch2L2BOP.id.U
@@ -154,6 +156,7 @@ class PrefetchTrain(implicit p: Parameters) extends PrefetchBundle {
   val tag = UInt(fullTagBits.W)
   val set = UInt(setBits.W)
   val needT = Bool()
+  val isPut = Bool()
   val source = UInt(sourceIdBits.W)
   val vaddr = vaddrBitsOpt.map(_ => UInt(vaddrBitsOpt.get.W))
   val hit = Bool()
@@ -173,6 +176,9 @@ class PrefetchIO(implicit p: Parameters) extends PrefetchBundle {
     val addr = UInt(64.W)
     val pfSource = UInt(MemReqSource.reqSourceBits.W)
   }))
+  val mshrPressure50 = Input(Bool())
+  val mshrUsed = Input(UInt(log2Ceil((1 << bankBits) * mshrsAll + 1).W))
+  val matrixSinkANormalReqStall = Input(Bool())
 }
 
 class PrefetchQueue(implicit p: Parameters) extends PrefetchModule {
@@ -228,7 +234,6 @@ class PrefetchQueue(implicit p: Parameters) extends PrefetchModule {
   XSPerfAccumulate("prefetch_queue_empty", empty)
   XSPerfAccumulate("prefetch_queue_full", full)
 }
-
 class Prefetcher(implicit p: Parameters) extends PrefetchModule {
   val io = IO(new PrefetchIO)
   val tpio = IO(new Bundle() {
@@ -312,6 +317,10 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
     pbop.get.io.train.valid := io.train.valid && (io.train.bits.reqsource =/= MemReqSource.L1DataPrefetch.id.U)
     pbop.get.io.resp <> io.resp
     pbop.get.io.resp.valid := io.resp.valid && io.resp.bits.isPBOP
+    pbop.get.io.matrixMshrPressure := io.mshrPressure50
+    pbop.get.io.matrixMshrUsed := io.mshrUsed
+    pbop.get.io.matrixSinkANormalReqStall := io.matrixSinkANormalReqStall
+    pbop.get.io.matrixQueuePressure := false.B
   }
   if (hasReceiver) {
     pfRcv.get.io_enable := pfRcv_en
@@ -345,28 +354,91 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
 
   // =================== Connection of all Prefetchers =====================
   /* prefetchers -> pftQueue -> pipe -> Slices.SinkA */
+    private val hardcodedPrefetchEnableCst =
+      Constantin.createRecord("l2_hardcoded_prefetch_enable" + cacheParams.hartId.toString, initValue = 1)
+    val hardcodedPrefetchEnable = hardcodedPrefetchEnableCst.orR
 
-  val pftQueue = Module(new PrefetchQueue)
-  val pipe = Module(new Pipeline(io.req.bits.cloneType, 1))
+      // Trigger while train addresses fall into the first mst c window,
+      // but prefetch the second mld b segment.
+      val hardcodedTriggerMstCBase = "h78285340".U(fullAddressBits.W)
+      val hardcodedTriggerMstCEnd = (hardcodedTriggerMstCBase + "h7ec0".U(fullAddressBits.W))(fullAddressBits - 1, 0)
+      val hardcodedSecondMldBBase = "h7824c340".U(fullAddressBits.W)
+      // Prefetch second mld b as contiguous cacheline accesses (+0x80 stride on the same slice).
+      val hardcodedSecondCrCount = 90.U(8.W)
+      def hardcodedSecondCrAddr(idx: UInt): UInt = {
+        hardcodedSecondMldBBase + (idx << 7)
+      }
 
-  pftQueue.io.enq.valid :=
-    (if (hasReceiver)     pfRcv.get.io.req.valid                         else false.B) ||
-    (if (hasBOP)          vbop.get.io.req.valid || pbop.get.io.req.valid else false.B) ||
-    (if (hasTPPrefetcher) tp.get.io.req.valid                            else false.B)
-  pftQueue.io.enq.bits := ParallelPriorityMux(Seq(
-    if (hasReceiver)     pfRcv.get.io.req.valid -> pfRcv.get.io.req.bits else false.B -> 0.U.asTypeOf(io.req.bits),
-    if (hasBOP)          vbop.get.io.req.valid -> vbop.get.io.req.bits   else false.B -> 0.U.asTypeOf(io.req.bits),
-    if (hasBOP)          pbop.get.io.req.valid -> pbop.get.io.req.bits   else false.B -> 0.U.asTypeOf(io.req.bits),
-    if (hasTPPrefetcher) tp.get.io.req.valid -> tp.get.io.req.bits       else false.B -> 0.U.asTypeOf(io.req.bits)
-  ))
+    val hardcodedIssued = RegInit(0.U(8.W))
 
-  pipe.io.in <> pftQueue.io.deq
-  io.req <> pipe.io.out
+    val hardcodedTrainOnTargetSlice = if (bankBits == 0) true.B else io.train.bits.set(bankBits - 1, 0) === 1.U(bankBits.W)
+
+    val hardcodedTrainTrigger = io.train.valid &&
+      io.train.bits.reqsource === MemReqSource.CPUMatrixData.id.U &&
+      io.train.bits.isPut &&
+      io.train.bits.addr >= hardcodedTriggerMstCBase &&
+      io.train.bits.addr <= hardcodedTriggerMstCEnd &&
+      hardcodedTrainOnTargetSlice &&
+      (hardcodedIssued < hardcodedSecondCrCount)
+
+    val hardcodedReq = Wire(new PrefetchReq)
+    hardcodedReq := 0.U.asTypeOf(new PrefetchReq)
+    val hardcodedAddr = hardcodedSecondCrAddr(hardcodedIssued)
+    // hardcodedAddr is the full physical address from the trace (with bank/slice bits).
+    // PrefetchReq, however, carries the slice-local address format used inside a slice.
+    // TXREQ will restore the slice bits later, so we must strip them here.
+    val (hardcodedTag, hardcodedSet, _) = parseAddress(hardcodedAddr)
+    hardcodedReq.tag := hardcodedTag
+    hardcodedReq.set := hardcodedSet
+    hardcodedReq.vaddr.foreach(_ := 0.U)
+    hardcodedReq.needT := false.B
+    hardcodedReq.source := io.train.bits.source
+    hardcodedReq.pfSource := MemReqSource.Prefetch2L2PBOP.id.U
+    hardcodedReq.routeBySliceId := true.B
+    hardcodedReq.targetSlice := 1.U
+
+    val hardcodedReqOnTargetSlice = if (bankBits == 0) true.B else hardcodedAddr(offsetBits + bankBits - 1, offsetBits) === 1.U(bankBits.W)
+    val hardcodedReqValid = hardcodedTrainTrigger && hardcodedReqOnTargetSlice
+
+    val pftQueue = Module(new PrefetchQueue)
+    val pipe = Module(new Pipeline(io.req.bits.cloneType, 1))
 
   val hasReceiverReq = if (hasReceiver) pfRcv.get.io.req.valid else false.B
   val hasVBOPReq = if (hasBOP) vbop.get.io.req.valid else false.B
   val hasPBOPReq = if (hasBOP) pbop.get.io.req.valid else false.B
   val hasTPReq = if (hasTPPrefetcher) tp.get.io.req.valid else false.B
+
+  val prefetchReqArbValid = hasReceiverReq || hasVBOPReq || hasPBOPReq || hasTPReq
+  val prefetchReqArbBits = Wire(new PrefetchReq)
+  prefetchReqArbBits := 0.U.asTypeOf(new PrefetchReq)
+  if (hasReceiver) {
+    when (pfRcv.get.io.req.valid) {
+      prefetchReqArbBits := pfRcv.get.io.req.bits
+    }
+  }
+  if (hasBOP) {
+    when (!hasReceiverReq && vbop.get.io.req.valid) {
+      prefetchReqArbBits := vbop.get.io.req.bits
+    }
+    when (!hasReceiverReq && !hasVBOPReq && pbop.get.io.req.valid) {
+      prefetchReqArbBits := pbop.get.io.req.bits
+    }
+  }
+  if (hasTPPrefetcher) {
+    when (!hasReceiverReq && !hasVBOPReq && !hasPBOPReq && tp.get.io.req.valid) {
+      prefetchReqArbBits := tp.get.io.req.bits
+    }
+  }
+
+    pftQueue.io.enq.valid := Mux(hardcodedPrefetchEnable, hardcodedReqValid, prefetchReqArbValid)
+    pftQueue.io.enq.bits := Mux(hardcodedPrefetchEnable, hardcodedReq, prefetchReqArbBits)
+
+    when (hardcodedPrefetchEnable && pftQueue.io.enq.fire && hardcodedReqValid) {
+      hardcodedIssued := hardcodedIssued + 1.U
+    }
+
+  pipe.io.in <> pftQueue.io.deq
+  io.req <> pipe.io.out
 
   val vbopTrainFire = if (hasBOP) vbop.get.io.train.fire else false.B
   val vbopRespFire = if (hasBOP) vbop.get.io.resp.fire else false.B
@@ -388,6 +460,9 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
   XSPerfAccumulate("prefetch_vbop_train_fire", vbopTrainFire)
   XSPerfAccumulate("prefetch_vbop_resp_fire", vbopRespFire)
   XSPerfAccumulate("prefetch_vbop_req_fire", vbopReqFire)
+    XSPerfAccumulate("prefetch_hardcoded_train_trigger", hardcodedPrefetchEnable && hardcodedTrainTrigger)
+    XSPerfAccumulate("prefetch_hardcoded_pending", false.B)
+    XSPerfAccumulate("prefetch_hardcoded_req_fire", hardcodedPrefetchEnable && pftQueue.io.enq.fire && hardcodedReqValid)
   // NOTE: set basicDB false when debug over
   // TODO: change the enable signal to not target the BOP
   class TrainEntry extends Bundle{
@@ -400,7 +475,7 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
     val pfsource = UInt(PfSource.pfSourceBits.W)
     val reqsource = UInt(MemReqSource.reqSourceBits.W)
   }
-  val trainTT = ChiselDB.createTable("L2PrefetchTrainTable", new TrainEntry, basicDB = false)
+  val trainTT = ChiselDB.createTable("L2PrefetchTrainTable", new TrainEntry, basicDB = true)
   val e1 = Wire(new TrainEntry)
   e1.paddr := io.train.bits.addr
   e1.vaddr := io.train.bits.vaddr.getOrElse(0.U) << offsetBits

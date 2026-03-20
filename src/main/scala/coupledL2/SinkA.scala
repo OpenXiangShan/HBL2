@@ -34,9 +34,8 @@ class SinkA(implicit p: Parameters) extends L2Module {
     val task = DecoupledIO(new TaskBundle)
     val cmoAll = Option.when(cacheParams.enableL2Flush) (new IOCMOAll)
   })
-  assert(!(io.a.valid && (io.a.bits.opcode === PutFullData ||
-                          io.a.bits.opcode === PutPartialData)),
-    "no Put through SinkA!");
+  assert(!(io.a.valid && io.a.bits.opcode === PutPartialData),
+    "PutPartialData is unsupported through SinkA!");
 
   // flush L2 all control defines
   val set = Option.when(cacheParams.enableL2Flush)(RegInit(0.U(setBits.W))) 
@@ -106,11 +105,10 @@ class SinkA(implicit p: Parameters) extends L2Module {
   }
   def fromPrefetchReqtoTaskBundle(req: PrefetchReq): TaskBundle = {
     val task = Wire(new TaskBundle)
-    val fullAddr = Cat(req.tag, req.set, 0.U(offsetBits.W))
     task := 0.U.asTypeOf(new TaskBundle)
     task.channel := "b001".U
-    task.tag := parseAddress(fullAddr)._1
-    task.set := parseAddress(fullAddr)._2
+    task.tag := req.tag
+    task.set := req.set
     task.off := 0.U
     task.alias.foreach(_ := 0.U)
     task.opcode := Hint
@@ -146,18 +144,31 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
     task
   }
+  val aTask = fromTLAtoTaskBundle(io.a.bits)
   if (prefetchOpt.nonEmpty) {
-    io.task.valid := io.a.valid && !cmoAllBlock || io.prefetchReq.get.valid || cmoAllValid
+    val aReqValid = io.a.valid && !cmoAllBlock
+    val prefetchValid = io.prefetchReq.get.valid
+    val preferA = RegInit(true.B)
+
+    val chooseA = cmoAllValid || (aReqValid && (!prefetchValid || preferA))
+    val choosePrefetch = !cmoAllValid && prefetchValid && (!aReqValid || !preferA)
+
+    io.task.valid := aReqValid || prefetchValid || cmoAllValid
     io.task.bits := Mux(
-      io.a.valid || cmoAllValid,
-      fromTLAtoTaskBundle(io.a.bits),
-      fromPrefetchReqtoTaskBundle(io.prefetchReq.get.bits
-    ))
-    io.a.ready := io.task.ready && !cmoAllBlock
-    io.prefetchReq.get.ready := io.task.ready && !io.a.valid
+      chooseA,
+      aTask,
+      fromPrefetchReqtoTaskBundle(io.prefetchReq.get.bits)
+    )
+
+    io.a.ready := io.task.ready && aReqValid && chooseA
+    io.prefetchReq.get.ready := io.task.ready && choosePrefetch
+
+    when (io.task.fire && aReqValid && prefetchValid && !cmoAllValid) {
+      preferA := !preferA
+    }
   } else {
     io.task.valid := io.a.valid && !cmoAllBlock || cmoAllValid
-    io.task.bits := fromTLAtoTaskBundle(io.a.bits) 
+    io.task.bits := aTask
     io.a.ready := io.task.ready && !cmoAllBlock
   }
 
@@ -213,6 +224,7 @@ class SinkA(implicit p: Parameters) extends L2Module {
   XSPerfAccumulate("sinkA_acquireblock_req", io.a.fire && io.a.bits.opcode === AcquireBlock)
   XSPerfAccumulate("sinkA_acquireperm_req", io.a.fire && io.a.bits.opcode === AcquirePerm)
   XSPerfAccumulate("sinkA_get_req", io.a.fire && io.a.bits.opcode === Get)
+  XSPerfAccumulate("sinkA_putfull_fire", io.a.fire && io.a.bits.opcode === PutFullData)
   prefetchOpt.foreach {
     _ =>
       XSPerfAccumulate("sinkA_prefetch_req", io.prefetchReq.get.fire)

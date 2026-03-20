@@ -73,6 +73,9 @@ class RequestArb(implicit p: Parameters) extends L2Module
 
     /* MSHR Status */
     val msInfo = Vec(mshrsAll, Flipped(ValidIO(new MSHRInfo())))
+
+    // Asserted when sinkA has a stalled non-prefetch request.
+    val sinkANormalReqStall = Output(Bool())
   })
 
   /* ======== Reset ======== */
@@ -132,21 +135,51 @@ class RequestArb(implicit p: Parameters) extends L2Module
   val block_C_put =  io.fromMSHRCtl.blockC_s1 && io.sinkC.bits.fromA
   val block_C = block_C_put || io.fromMainPipe.blockC_s1 || io.fromGrantBuffer.blockSinkReqEntrance.blockC_s1
 
+  val sinkAIsPrefetchReq =
+    A_task.reqSource === MemReqSource.L1InstPrefetch.id.U ||
+    A_task.reqSource === MemReqSource.L1DataPrefetch.id.U ||
+    A_task.reqSource === MemReqSource.Prefetch2L2BOP.id.U ||
+    A_task.reqSource === MemReqSource.Prefetch2L2PBOP.id.U ||
+    A_task.reqSource === MemReqSource.Prefetch2L2SMS.id.U ||
+    A_task.reqSource === MemReqSource.Prefetch2L2Stream.id.U ||
+    A_task.reqSource === MemReqSource.Prefetch2L2Stride.id.U ||
+    A_task.reqSource === MemReqSource.Prefetch2L2TP.id.U ||
+    A_task.reqSource === MemReqSource.Prefetch2L2Unknown.id.U ||
+    A_task.reqSource === MemReqSource.Prefetch2L3Stream.id.U ||
+    A_task.reqSource === MemReqSource.Prefetch2L3Stride.id.U ||
+    A_task.reqSource === MemReqSource.Prefetch2L3Unknown.id.U
+
+  io.sinkANormalReqStall := io.sinkA.valid && !io.sinkA.ready && !sinkAIsPrefetchReq
+
 //  val noFreeWay = Wire(Bool())
 
-  val sinkValids = VecInit(Seq(
-    io.sinkC.valid && !block_C,
-    io.sinkB.valid && !block_B,
-    io.sinkA.valid && !block_A
-  )).asUInt
+    val sinkCValidRaw = io.sinkC.valid && !block_C
+    val sinkBValidRaw = io.sinkB.valid && !block_B
+    val sinkAValidRaw = io.sinkA.valid && !block_A
 
-  // TODO: A Hint is allowed to enter if !s2_ready for mcp2_stall
+    // When SinkC (matrix Put remap) and SinkA (prefetch Hint) conflict, alternate to avoid starvation.
+    val preferSinkC = RegInit(true.B)
+    val sinkCAConflict = sinkCValidRaw && sinkAValidRaw && !sinkBValidRaw
+    val sinkCSelected = sinkCValidRaw && !(sinkCAConflict && !preferSinkC)
+    val sinkASelected = sinkAValidRaw && !(sinkCAConflict && preferSinkC)
 
-  val sink_ready_basic = io.dirRead_s1.ready && resetFinish && !mshr_task_s1.valid && s2_ready
+    val sinkValids = VecInit(Seq(
+      sinkCSelected,
+      sinkBValidRaw,
+      sinkASelected
+    )).asUInt
 
-  io.sinkA.ready := sink_ready_basic && !block_A && !sinkValids(1) && !sinkValids(0) // SinkC prior to SinkA & SinkB
-  io.sinkB.ready := sink_ready_basic && !block_B && !sinkValids(0) // SinkB prior to SinkA
-  io.sinkC.ready := sink_ready_basic && !block_C
+    // TODO: A Hint is allowed to enter if !s2_ready for mcp2_stall
+
+    val sink_ready_basic = io.dirRead_s1.ready && resetFinish && !mshr_task_s1.valid && s2_ready
+
+    io.sinkA.ready := sink_ready_basic && sinkASelected && !sinkValids(1) && !sinkValids(0)
+    io.sinkB.ready := sink_ready_basic && sinkBValidRaw && !sinkValids(0)
+    io.sinkC.ready := sink_ready_basic && sinkCSelected
+
+    when (sink_ready_basic && sinkCAConflict && (io.sinkA.fire || io.sinkC.fire)) {
+      preferSinkC := !preferSinkC
+    }
 
   val chnl_task_s1 = Wire(Valid(new TaskBundle()))
   chnl_task_s1.valid := io.dirRead_s1.ready && sinkValids.orR && resetFinish
@@ -174,6 +207,7 @@ class RequestArb(implicit p: Parameters) extends L2Module
   io.dirRead_s1.bits.replacerInfo.opcode := task_s1.bits.opcode
   io.dirRead_s1.bits.replacerInfo.channel := task_s1.bits.channel
   io.dirRead_s1.bits.replacerInfo.reqSource := task_s1.bits.reqSource
+  io.dirRead_s1.bits.replacerInfo.matrixTask := task_s1.bits.matrixTask
   io.dirRead_s1.bits.replacerInfo.refill_prefetch := s1_needs_replRead && (mshr_task_s1.bits.opcode === HintAck && mshr_task_s1.bits.dsWen)
   io.dirRead_s1.bits.refill := s1_needs_replRead
   io.dirRead_s1.bits.mshrId := task_s1.bits.mshrId

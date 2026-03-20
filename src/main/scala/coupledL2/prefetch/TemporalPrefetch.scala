@@ -382,6 +382,8 @@ class TemporalPrefetch(implicit p: Parameters) extends TPModule {
   io.req.bits.needT := true.B
   io.req.bits.source := 0.U // TODO: ensure source 0 is dcache
   io.req.bits.pfSource := MemReqSource.Prefetch2L2TP.id.U
+  io.req.bits.routeBySliceId := false.B
+  io.req.bits.targetSlice := 0.U
 
   io.resp.ready := true.B
   io.train.ready := resetFinish

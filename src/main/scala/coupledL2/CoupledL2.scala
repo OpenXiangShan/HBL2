@@ -381,6 +381,8 @@ abstract class CoupledL2Base(implicit p: Parameters) extends LazyModule with Has
     val prefetchTrains = prefetchOpt.map(_ => Wire(Vec(banks, DecoupledIO(new PrefetchTrain()(pftParams)))))
     val prefetchResps = prefetchOpt.map(_ => Wire(Vec(banks, DecoupledIO(new PrefetchResp()(pftParams)))))
     val prefetchReqsReady = WireInit(VecInit(Seq.fill(banks)(false.B)))
+    val prefetchMshrPressure50 = WireInit(false.B)
+    val prefetchMshrUsed = WireInit(0.U(log2Ceil(banks * mshrsAll + 1).W))
     io.l2_tlb_req <> DontCare // TODO: l2_tlb_req should be Option
     prefetchOpt.foreach {
       _ =>
@@ -388,6 +390,8 @@ abstract class CoupledL2Base(implicit p: Parameters) extends LazyModule with Has
         prefetcher.get.io.req.ready := Cat(prefetchReqsReady).orR
         prefetcher.get.hartId := io.hartId
         prefetcher.get.pfCtrlFromCore := io.pfCtrlFromCore
+        prefetcher.get.io.mshrPressure50 := prefetchMshrPressure50
+        prefetcher.get.io.mshrUsed := prefetchMshrUsed
         fastArb(prefetchResps.get, prefetcher.get.io.resp, Some("prefetch_resp"))
         prefetcher.get.io.tlb_req <> io.l2_tlb_req
     }
@@ -471,10 +475,22 @@ abstract class CoupledL2Base(implicit p: Parameters) extends LazyModule with Has
         slice.io.l2Flush.foreach(_ := io.l2Flush.getOrElse(false.B))
 
         slice.io.prefetch.zip(prefetcher).foreach {
-          case (s, p) =>
-            s.req.valid := p.io.req.valid && bank_eq(Cat(p.io.req.bits.tag, p.io.req.bits.set), i, bankBits)
-            s.req.bits := p.io.req.bits
-            prefetchReqsReady(i) := s.req.ready && bank_eq(Cat(p.io.req.bits.tag, p.io.req.bits.set), i, bankBits)
+          case (s, pf) =>
+            val pfReqToThisSlice =
+              if (bankBits == 0) {
+                true.B
+              } else {
+                Mux(
+                  pf.io.req.bits.routeBySliceId,
+                  pf.io.req.bits.targetSlice === i.U,
+                  bank_eq(Cat(pf.io.req.bits.tag, pf.io.req.bits.set), i, bankBits)
+                )
+              }
+            s.req.valid := pf.io.req.valid && pfReqToThisSlice
+            s.req.bits := pf.io.req.bits
+            prefetchReqsReady(i) := s.req.ready && pfReqToThisSlice
+              XSPerfHistogram("bop_req_matrix_mshr_used_slice_" + i.toString, slice.io.prefetchMshrUsed,
+                s.req.fire && pf.io.req.bits.pfSource === MemReqSource.Prefetch2L2PBOP.id.U, 0, mshrsAll + 1, 1)(p)
             val train = Pipeline(s.train)
             val resp = Pipeline(s.resp)
             prefetchTrains.get(i) <> train
@@ -501,6 +517,12 @@ abstract class CoupledL2Base(implicit p: Parameters) extends LazyModule with Has
         }
 
         slice
+    }
+
+    prefetchMshrPressure50 := Cat(slices.map(_.io.prefetchMshrPressure50)).andR
+    prefetchMshrUsed := slices.map(_.io.prefetchMshrUsed).reduce(_ +& _)
+    prefetchOpt.foreach { _ =>
+      prefetcher.get.io.matrixSinkANormalReqStall := Cat(slices.flatMap(_.io.prefetch.map(_.matrixSinkANormalReqStall))).orR
     }
 
     val perfEvents = Seq(("noEvent", 0.U)) ++ slices.zipWithIndex.map {
