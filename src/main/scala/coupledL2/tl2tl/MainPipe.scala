@@ -322,7 +322,7 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
   val need_data_mshr_repl = mshr_refill_s3 && need_repl && !retry
   val ren                 = need_data_a || need_data_b || need_data_put_repl || need_data_mshr_repl
 
-  val wen_a = req_put_s3 && dirResult_s3.hit
+  val wen_a = req_put_s3 && !need_release_for_put
   val wen_c = sinkC_req_s3 && isParamFromT(req_s3.param) && req_s3.opcode(0) && dirResult_s3.hit
   val wen_mshr = req_s3.dsWen && (
     mshr_probeack_s3 || mshr_release_s3 ||
@@ -378,7 +378,7 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
   val metaW_valid_s3_c    = sinkC_req_s3 && dirResult_s3.hit
   val metaW_valid_s3_mshr = mshr_req_s3 && req_s3.metaWen && !(mshr_refill_s3 && retry)
   // the following 2 conditions are for Matrix
-  val metaW_valid_s3_put  = req_put_s3 && dirResult_s3.hit
+  val metaW_valid_s3_put  = req_put_s3 && !need_release_for_put
   val metaW_valid_s3_probed = sinkB_req_s3 && dirResult_s3.hit && meta_s3_rmw
   require(clientBits == 1)
 
@@ -459,9 +459,11 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
     MetaEntry()
   )
 
-  io.tagWReq.valid     := task_s3.valid && req_s3.tagWen && mshr_refill_s3 && !retry
+  val put_tagW_valid = req_put_s3 && !dirResult_s3.hit && !need_release_for_put
+  io.tagWReq.valid     := task_s3.valid && (req_s3.tagWen && mshr_refill_s3 && !retry || put_tagW_valid)
   io.tagWReq.bits.set  := req_s3.set
-  io.tagWReq.bits.way  := Mux(mshr_refill_s3 && req_s3.replTask, io.replResp.bits.way, req_s3.way)
+  io.tagWReq.bits.way  := Mux(put_tagW_valid, dirResult_s3.way,
+    Mux(mshr_refill_s3 && req_s3.replTask, io.replResp.bits.way, req_s3.way))
   io.tagWReq.bits.wtag := req_s3.tag
 
   /* ======== Interact with Channels (C & D) ======== */
