@@ -14,11 +14,10 @@ import freechips.rocketchip.tilelink.TLPermissions._
 // -----------------------
 // | IN | OPCODE  | OUT |
 // =======================
-// | A  | Acquire  | A   |
-// | A  | Get      | A   |
-// | A  | Put      | C   |
-// | C  | ProbeAck | C   |  higher priv?
-// | C  | Release  | C   |  higher priv?
+// | A  | Acquire | A   |
+// | A  | Get     | A   |
+// | A  | Put     | C   |
+// | C  | Release | C   |  higher priv
 // -----------------------
 class SinkMX(implicit p: Parameters) extends L2Module {
   val io = IO(new Bundle() {
@@ -29,6 +28,10 @@ class SinkMX(implicit p: Parameters) extends L2Module {
     val out_a = DecoupledIO(new TLBundleA(edgeIn.bundle))
     val out_c = DecoupledIO(new TLBundleC(edgeIn.bundle))
   })
+
+  // Default passthrough
+  io.out_a <> io.a
+  io.out_c <> io.c
 
   val matrix_key = io.a.bits.user.lift(MatrixKey).getOrElse(0.U)
   val isMatrix = MatrixInfo.isMatrix(matrix_key)
@@ -42,68 +45,38 @@ class SinkMX(implicit p: Parameters) extends L2Module {
     a.opcode === Get && isMatrix
   }
 
-  val out_a = WireInit(io.a)
-  val out_c = WireInit(io.c)
-
   val a = io.a.bits
   val c = io.c.bits
 
-  // TODO: only PutFull considered for now
-  val hasPendingPut = RegInit(false.B)
-  val (first, last, _, _) = edgeIn.count(io.a)
+  // ======== the following handles special cases ========
+  // If it's a matrix put and C channel is not valid, convert it to ReleaseData on C channel
+  when(io.a.valid && isMatrixPut(a) && !io.c.valid) {
+    io.out_c.bits.opcode := ReleaseData
+    io.out_c.bits.param := TtoN
+    io.out_c.bits.data := a.data
+    io.out_c.bits.address := a.address
+    io.out_c.bits.size := a.size
+    io.out_c.bits.source := a.source
+    io.out_c.bits.corrupt := a.corrupt
+    // io.out_c.bits.user(VaddrKey) := a.address
+    io.out_c.bits.user.lift(MatrixKey).foreach(_ := matrix_key)
 
-  // Determine out_a.valid:
-  // 1. if a is not a matrix put, flow io.a to out_a
-  // 2. if a is a matrix put, and in_c is not valid, flow io.a to out_c
-  // 3. if a is a matrix put, and in_c is valid, stall a
+    io.out_a.valid := false.B
+    io.out_c.valid := true.B
+    io.a.ready := io.out_c.ready
+    io.c.ready := false.B
+  }
 
-  // Handle MatrixGet
+  when(io.a.valid && isMatrixPut(a) && io.c.valid) {
+    io.out_a.valid := false.B
+    io.out_c.valid := true.B
+    io.a.ready := false.B
+    io.c.ready := io.out_c.ready
+  }
+
   when(isMatrixGet(a) && io.a.valid) {
-    out_a.bits.opcode := io.a.bits.opcode//Get Or AcquireBlock
-    // although TileLink requires Get's param fixed 0 (NtoB),
-    // here we specifically design Get with NtoT, which also triggers needT in L2
-    // but when sending to L3, we will use Acquire NtoT
-    out_a.bits.param := Mux(isRMW, NtoT, NtoB)
+    io.out_a.bits.param := Mux(isRMW, NtoT, NtoB)
   }
 
-  // Handle MatrixPut
-  when(isMatrixPut(a) && io.a.valid) {
-    // By anycase, CoupledL2 cannot accept Put from A channel.
-    // Wait for C channel be spare.
-    out_a.valid := false.B
 
-    when(!io.c.valid) {
-      // If c is not valid, convert the request to ReleaseData
-      out_c.bits.opcode := ReleaseData
-      out_c.bits.param := TtoN // Set appropriate parameters for ReleaseData
-      out_c.bits.data := a.data // Use data from the A channel
-      out_c.bits.address := a.address // Use address from the A channel
-      out_c.bits.size := a.size
-      out_c.bits.source := a.source
-      out_c.bits.corrupt := a.corrupt
-      // out_c.bits.user(VaddrKey) := a.address
-      out_c.valid := true.B
-      out_c.bits.user.lift(MatrixKey).foreach(_ := matrix_key)
-    }
-  }
-
-  when (io.a.valid && isMatrixPut(a) && io.c.ready) {
-    when (first && !io.c.valid) {
-      hasPendingPut := true.B
-    }.elsewhen (last && hasPendingPut) {
-      hasPendingPut := false.B
-    }
-  }
-
-  // Connect output signals
-  io.out_a <> out_a
-  io.out_c <> out_c
-
-  // Handle ready signals
-  io.c.ready := Mux(hasPendingPut, false.B, out_c.ready)
-  // Bypass channel A matrix put to C, but stalled for original C channel requests.
-  // TODO: it is not recommended to use input valid to drive input ready,
-  // might cause longer path, unfriendly to timing
-  io.a.ready := Mux(hasPendingPut, io.out_c.ready,
-    Mux(isMatrixPut(a), io.out_c.ready && !io.c.valid, io.out_a.ready))
 }
