@@ -735,7 +735,7 @@ object TestTop_L2L3 extends App {
     )
   })
   ChiselDB.init(true)
-  Constantin.init(false)
+  Constantin.init(true)
 
   val top = DisableMonitors(p => LazyModule(new TestTop_L2L3()(p)) )(config)
   (new ChiselStage).execute(args,
@@ -758,7 +758,7 @@ object TestTop_L2L3L2 extends App {
     )
   })
   ChiselDB.init(true)
-  Constantin.init(false)
+  Constantin.init(true)
 
   val top = DisableMonitors(p => LazyModule(new TestTop_L2L3L2()(p)))(config)
   (new ChiselStage).execute(args,

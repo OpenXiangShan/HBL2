@@ -220,7 +220,7 @@ object TestTopCHIHelper {
     })
 
     ChiselDB.init(enableChiselDB)
-    Constantin.init(false)
+    Constantin.init(true)
 
     val top = DisableMonitors(p => LazyModule(fTop(p)))(config)
 

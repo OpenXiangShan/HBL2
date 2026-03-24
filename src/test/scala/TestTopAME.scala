@@ -40,6 +40,78 @@ private[coupledL2] object TestTopAMEFirtoolOptions {
   )
 }
 
+class TLMemoryResponseDelayer(latency: Int, entries: Int = 128)(implicit p: Parameters) extends LazyModule {
+  require(latency >= 0, s"latency must be non-negative, got $latency")
+  require(entries > 0, s"entries must be positive, got $entries")
+
+  val node = TLAdapterNode(
+    clientFn = { cp => cp },
+    managerFn = { mp => mp.v1copy(minLatency = mp.minLatency + latency) }
+  )
+
+  lazy val module = new LazyModuleImp(this) {
+    private def wrapInc(ptr: UInt): UInt = Mux(ptr === (entries - 1).U, 0.U, ptr + 1.U)
+
+    for (((in, edgeIn), (out, edgeOut)) <- node.in.zip(node.out)) {
+      out.a <> in.a
+
+      val bce = edgeOut.manager.anySupportAcquireB && edgeOut.client.anySupportProbe
+      if (bce) {
+        out.c <> in.c
+        out.e <> in.e
+        in.b <> out.b
+      } else {
+        in.b.valid := false.B
+        in.c.ready := true.B
+        in.e.ready := true.B
+        out.b.ready := true.B
+        out.c.valid := false.B
+        out.e.valid := false.B
+      }
+
+      if (latency == 0) {
+        in.d <> out.d
+      } else {
+        val cycle = RegInit(0.U(64.W))
+        cycle := cycle + 1.U
+
+        val depth = entries.U
+        val ptrWidth = log2Ceil(entries)
+        val head = RegInit(0.U(ptrWidth.W))
+        val tail = RegInit(0.U(ptrWidth.W))
+        val count = RegInit(0.U(log2Ceil(entries + 1).W))
+        val dataQ = Reg(Vec(entries, chiselTypeOf(out.d.bits)))
+        val releaseCycleQ = Reg(Vec(entries, UInt(64.W)))
+
+        val empty = count === 0.U
+        val full = count === depth
+        val headMature = !empty && cycle >= releaseCycleQ(head)
+        val deq = headMature && in.d.ready
+        val enqReady = !full || deq
+
+        in.d.valid := headMature
+        in.d.bits := dataQ(head)
+        out.d.ready := enqReady
+
+        when(out.d.fire) {
+          dataQ(tail) := out.d.bits
+          releaseCycleQ(tail) := cycle + latency.U
+          tail := wrapInc(tail)
+        }
+
+        when(deq) {
+          head := wrapInc(head)
+        }
+
+        switch(Cat(out.d.fire, deq)) {
+          is("b10".U) { count := count + 1.U }
+          is("b01".U) { count := count - 1.U }
+        }
+      }
+    }
+  }
+}
+
 class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
 
   override lazy val desiredName: String = "TestTop"
@@ -118,7 +190,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
   val DISABLE_MATRIX_PREFETCH_TRAIN = false
   val DISABLE_NON_MATRIX_PREFETCH_TRAIN = true
 
-  // 2MB L2 Cache with 8 banks
+  // L2 bank count comes from the top-level test configuration.
   val l2 = LazyModule(new TL2TLCoupledL2()(baseConfig(1).alter((site, here, up) => {
     case L2ParamKey => L2Param(
       name = s"l2",
@@ -160,7 +232,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
     )
   })))
 
-  // 16MB L3 Cache with 2 banks
+  // Keep L3 bank count aligned with the matrix test slice count.
   val l3 = LazyModule(new HuanCun()(baseConfig(1).alter((site, here, up) => {
     case HCCacheParamsKey => HCCacheParameters(
       name = "l3",
@@ -199,6 +271,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
 
   val l2bankBinders = BankBinder(l2_banks, 64)
   val l3bankBinders = BankBinder(l3_banks, 64)
+  val memRespDelayer = LazyModule(new TLMemoryResponseDelayer(latency = 50, entries = 128))
   val ram = LazyModule(new TLRAM(AddressSet(0, 0xffff_ffffL), beatBytes = 32))
 
   c_nodes.zipWithIndex map{ case(c,i) =>
@@ -216,6 +289,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
   l2xbar :=* l2bankBinders :*= TLLogger(s"L3_L2", true) :*= l2.node :*= l1xbar
 
   ram.node :=
+    memRespDelayer.node :=
     memxbar :=
     TLFragmenter(32, 64) :=
     TLCacheCork() :=
@@ -298,7 +372,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
    */
 
 object TestTop_L2L3_AME extends App {
-  val l2_banks=2
+  val l2_banks=4
   val l3_banks=2
   val m_num=l2_banks
 
@@ -313,7 +387,7 @@ object TestTop_L2L3_AME extends App {
     )
   })
   ChiselDB.init(true)
-  Constantin.init(false)
+  Constantin.init(true)
 
   val top = DisableMonitors(p => LazyModule(new TestTop_L2L3_AME()(p)) )(config)
   (new ChiselStage).execute(args,
@@ -324,4 +398,3 @@ object TestTop_L2L3_AME extends App {
   Constantin.addToFileRegisters
   FileRegisters.write("./build")
 }
-
