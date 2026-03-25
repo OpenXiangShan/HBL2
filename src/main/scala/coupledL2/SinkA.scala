@@ -144,31 +144,18 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
     task
   }
-  val aTask = fromTLAtoTaskBundle(io.a.bits)
   if (prefetchOpt.nonEmpty) {
-    val aReqValid = io.a.valid && !cmoAllBlock
-    val prefetchValid = io.prefetchReq.get.valid
-    val preferA = RegInit(true.B)
-
-    val chooseA = cmoAllValid || (aReqValid && (!prefetchValid || preferA))
-    val choosePrefetch = !cmoAllValid && prefetchValid && (!aReqValid || !preferA)
-
-    io.task.valid := aReqValid || prefetchValid || cmoAllValid
+    io.task.valid := io.a.valid && !cmoAllBlock || io.prefetchReq.get.valid || cmoAllValid
     io.task.bits := Mux(
-      chooseA,
-      aTask,
+      io.a.valid || cmoAllValid,
+      fromTLAtoTaskBundle(io.a.bits),
       fromPrefetchReqtoTaskBundle(io.prefetchReq.get.bits)
     )
-
-    io.a.ready := io.task.ready && aReqValid && chooseA
-    io.prefetchReq.get.ready := io.task.ready && choosePrefetch
-
-    when (io.task.fire && aReqValid && prefetchValid && !cmoAllValid) {
-      preferA := !preferA
-    }
+    io.a.ready := io.task.ready && !cmoAllBlock
+    io.prefetchReq.get.ready := io.task.ready && !io.a.valid
   } else {
     io.task.valid := io.a.valid && !cmoAllBlock || cmoAllValid
-    io.task.bits := aTask
+    io.task.bits := fromTLAtoTaskBundle(io.a.bits)
     io.a.ready := io.task.ready && !cmoAllBlock
   }
 

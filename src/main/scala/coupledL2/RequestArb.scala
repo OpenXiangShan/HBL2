@@ -153,33 +153,19 @@ class RequestArb(implicit p: Parameters) extends L2Module
 
 //  val noFreeWay = Wire(Bool())
 
-    val sinkCValidRaw = io.sinkC.valid && !block_C
-    val sinkBValidRaw = io.sinkB.valid && !block_B
-    val sinkAValidRaw = io.sinkA.valid && !block_A
-
-    // When SinkC (matrix Put remap) and SinkA (prefetch Hint) conflict, alternate to avoid starvation.
-    val preferSinkC = RegInit(true.B)
-    val sinkCAConflict = sinkCValidRaw && sinkAValidRaw && !sinkBValidRaw
-    val sinkCSelected = sinkCValidRaw && !(sinkCAConflict && !preferSinkC)
-    val sinkASelected = sinkAValidRaw && !(sinkCAConflict && preferSinkC)
-
     val sinkValids = VecInit(Seq(
-      sinkCSelected,
-      sinkBValidRaw,
-      sinkASelected
+      io.sinkC.valid && !block_C,
+      io.sinkB.valid && !block_B,
+      io.sinkA.valid && !block_A
     )).asUInt
 
     // TODO: A Hint is allowed to enter if !s2_ready for mcp2_stall
 
     val sink_ready_basic = io.dirRead_s1.ready && resetFinish && !mshr_task_s1.valid && s2_ready
 
-    io.sinkA.ready := sink_ready_basic && sinkASelected && !sinkValids(1) && !sinkValids(0)
-    io.sinkB.ready := sink_ready_basic && sinkBValidRaw && !sinkValids(0)
-    io.sinkC.ready := sink_ready_basic && sinkCSelected
-
-    when (sink_ready_basic && sinkCAConflict && (io.sinkA.fire || io.sinkC.fire)) {
-      preferSinkC := !preferSinkC
-    }
+    io.sinkA.ready := sink_ready_basic && !block_A && !sinkValids(1) && !sinkValids(0)
+    io.sinkB.ready := sink_ready_basic && !block_B && !sinkValids(0)
+    io.sinkC.ready := sink_ready_basic && !block_C
 
   val chnl_task_s1 = Wire(Valid(new TaskBundle()))
   chnl_task_s1.valid := io.dirRead_s1.ready && sinkValids.orR && resetFinish
