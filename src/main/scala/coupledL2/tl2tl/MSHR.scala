@@ -270,6 +270,8 @@ class MSHR(implicit p: Parameters) extends L2Module {
       clients = Fill(clientBits, !probeGotN),
       alias = meta.alias, //[Alias] Keep alias bits unchanged
       prefetch = req.param =/= toN && meta_pft,
+      pfsrc = meta.prefetchSrc.getOrElse(PfSource.NoWhere.id.U),
+      pfneedT = meta.prefetchNeedT.getOrElse(false.B),
       accessed = req.param =/= toN && meta.accessed
     )
     mp_probeack.metaWen := true.B
@@ -363,6 +365,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
       alias = Some(aliasFinal),
       prefetch = req_prefetch || dirResult.hit && meta_pft,
       pfsrc = PfSource.fromMemReqSource(req.reqSource),
+      pfneedT = Mux(req_prefetch, req_needT, meta.prefetchNeedT.getOrElse(false.B)),
       accessed = req_acquire || req_get,
       rmw = req.modify,
       local = meta.local || req_put && !dirResult.hit
@@ -410,6 +413,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
       clients = Fill(clientBits, true.B),
       alias = Some(merge_task.alias.getOrElse(0.U)),
       prefetch = false.B,
+      pfneedT = false.B,
       accessed = true.B
     )
     mp_grant.txChannel := 0.U

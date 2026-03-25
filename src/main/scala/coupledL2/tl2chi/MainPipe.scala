@@ -549,6 +549,9 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     state = Mux(req_needT_s3 || sink_resp_s3_a_promoteT, TRUNK, meta_s3.state),
     clients = Fill(clientBits, Mux(l2TagError_s3, false.B, true.B)),
     alias = Some(metaW_s3_a_alias),
+    prefetch = meta_s3.prefetch.getOrElse(false.B),
+    pfsrc = meta_s3.prefetchSrc.getOrElse(PfSource.NoWhere.id.U),
+    pfneedT = meta_s3.prefetchNeedT.getOrElse(false.B),
     accessed = true.B,
     tagErr = meta_s3.tagErr,
     dataErr = meta_s3.dataErr
@@ -559,6 +562,9 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
       state = Mux(req_s3.chiOpcode.get === SnpCleanShared, meta_s3.state, BRANCH),
       clients = meta_s3.clients,
       alias = meta_s3.alias,
+      prefetch = meta_s3.prefetch.getOrElse(false.B),
+      pfsrc = meta_s3.prefetchSrc.getOrElse(PfSource.NoWhere.id.U),
+      pfneedT = meta_s3.prefetchNeedT.getOrElse(false.B),
       accessed = meta_s3.accessed,
       tagErr = meta_s3.tagErr,
       dataErr = meta_s3.dataErr
@@ -569,6 +575,9 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     state = Mux(isParamFromT(req_s3.param), TIP, meta_s3.state),
     clients = Fill(clientBits, !isToN(req_s3.param)),
     alias = meta_s3.alias,
+    prefetch = meta_s3.prefetch.getOrElse(false.B),
+    pfsrc = meta_s3.prefetchSrc.getOrElse(PfSource.NoWhere.id.U),
+    pfneedT = meta_s3.prefetchNeedT.getOrElse(false.B),
     accessed = meta_s3.accessed,
     tagErr = Mux(wen_c, req_s3.denied, meta_s3.tagErr),
     dataErr = Mux(wen_c, req_s3.corrupt, meta_s3.dataErr) // update error when write DS

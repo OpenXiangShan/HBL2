@@ -34,6 +34,7 @@ class MetaEntry(implicit p: Parameters) extends L2Bundle {
   val alias = aliasBitsOpt.map(width => UInt(width.W)) // alias bits of client
   val prefetch = if (hasPrefetchBit) Some(Bool()) else None // whether block is prefetched
   val prefetchSrc = if (hasPrefetchSrc) Some(UInt(PfSource.pfSourceBits.W)) else None // prefetch source
+  val prefetchNeedT = if (hasPrefetchBit) Some(Bool()) else None // whether the original prefetch requested T
   val accessed = Bool()
   val tagErr = Bool() // ECC error from L1/L3; DataCheck for CHI
   val dataErr = Bool()
@@ -62,7 +63,7 @@ object MetaEntry {
     init
   }
   def apply(dirty: Bool, state: UInt, clients: UInt, alias: Option[UInt], prefetch: Bool = false.B,
-            pfsrc: UInt = PfSource.NoWhere.id.U, accessed: Bool = false.B,
+            pfsrc: UInt = PfSource.NoWhere.id.U, pfneedT: Bool = false.B, accessed: Bool = false.B,
             tagErr: Bool = false.B, dataErr: Bool = false.B,
             rmw: Bool = false.B, local: Bool = false.B
   )(implicit p: Parameters) = {
@@ -73,6 +74,7 @@ object MetaEntry {
     entry.alias.foreach(_ := alias.getOrElse(0.U))
     entry.prefetch.foreach(_ := prefetch)
     entry.prefetchSrc.foreach(_ := pfsrc)
+    entry.prefetchNeedT.foreach(_ := pfneedT)
     entry.accessed := accessed
     entry.tagErr := tagErr
     entry.dataErr := dataErr

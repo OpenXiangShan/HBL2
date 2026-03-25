@@ -366,6 +366,11 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
     private val matrixMldAEnableCst =
       Constantin.createRecord("l2_matrix_mlda_enable" + cacheParams.hartId.toString, initValue = 0)
     val matrixMldAEnable = matrixMldAEnableCst.orR
+    private val matrixMldAThresholdEnableCst =
+      Constantin.createRecord("l2_matrix_mlda_threshold_enable" + cacheParams.hartId.toString, initValue = 0)
+    val matrixMldAThresholdEnable = matrixMldAThresholdEnableCst.orR
+    private val matrixMldAThresholdPctCst =
+      Constantin.createRecord("l2_matrix_mlda_threshold_pct" + cacheParams.hartId.toString, initValue = 50)
     val hardcodedPathEnable = prefetchUseHardcodedMode && hardcodedPrefetchEnable && matrixMldAEnable
 
     private val hardcodedSliceCount = if (bankBits > 0) 1 << bankBits else 1
@@ -432,8 +437,12 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
     val selectedIntraStride = matrixMldAIntraStride(hardcodedTrainSlice)
     val selectedLineCount = matrixMldALineCount(hardcodedTrainSlice)
     val selectedSegmentCount = matrixMldASegmentCount(hardcodedTrainSlice)
-    // Limit each learned mld a segment to its first 50% lines.
-    val hardcodedPrefetchLineLimit = (selectedLineCount + 1.U) >> 1
+    val hardcodedThresholdPct = Mux(matrixMldAThresholdPctCst > 100.U, 100.U, matrixMldAThresholdPctCst)
+    val hardcodedPrefetchLineLimit = Mux(
+      matrixMldAThresholdEnable,
+      ((selectedLineCount * hardcodedThresholdPct) + 99.U) / 100.U,
+      selectedLineCount
+    )
 
     val hardcodedReq = Wire(new PrefetchReq)
     hardcodedReq := 0.U.asTypeOf(new PrefetchReq)

@@ -13,8 +13,6 @@ import coupledL2.prefetch._
 import coupledL2.tl2tl._
 import utility._
 
-
-import scala.collection.mutable.ArrayBuffer
 import coupledL2.TestTop_CHIL2.enableTLLog
 
 case object L2BanksKey extends Field[Int]
@@ -40,16 +38,22 @@ private[coupledL2] object TestTopAMEFirtoolOptions {
   )
 }
 
-class TLMemoryResponseDelayer(latency: Int, entries: Int = 128)(implicit p: Parameters) extends LazyModule {
-  require(latency >= 0, s"latency must be non-negative, got $latency")
+class TLMemoryResponseDelayer(maxLatency: Int, entries: Int = 128)(implicit p: Parameters) extends LazyModule {
+  require(maxLatency >= 0, s"maxLatency must be non-negative, got $maxLatency")
   require(entries > 0, s"entries must be positive, got $entries")
 
   val node = TLAdapterNode(
     clientFn = { cp => cp },
-    managerFn = { mp => mp.v1copy(minLatency = mp.minLatency + latency) }
+    managerFn = { mp => mp.v1copy(minLatency = mp.minLatency + maxLatency) }
   )
 
-  lazy val module = new LazyModuleImp(this) {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
+    val io = IO(new Bundle {
+      val enable = Input(Bool())
+      val delayCycles = Input(UInt(log2Ceil(maxLatency + 1).W))
+    })
+
     private def wrapInc(ptr: UInt): UInt = Mux(ptr === (entries - 1).U, 0.U, ptr + 1.U)
 
     for (((in, edgeIn), (out, edgeOut)) <- node.in.zip(node.out)) {
@@ -69,7 +73,9 @@ class TLMemoryResponseDelayer(latency: Int, entries: Int = 128)(implicit p: Para
         out.e.valid := false.B
       }
 
-      if (latency == 0) {
+      val delayActive = io.enable && io.delayCycles =/= 0.U
+
+      if (maxLatency == 0) {
         in.d <> out.d
       } else {
         val cycle = RegInit(0.U(64.W))
@@ -89,23 +95,27 @@ class TLMemoryResponseDelayer(latency: Int, entries: Int = 128)(implicit p: Para
         val deq = headMature && in.d.ready
         val enqReady = !full || deq
 
-        in.d.valid := headMature
-        in.d.bits := dataQ(head)
-        out.d.ready := enqReady
+        when(!delayActive && empty) {
+          in.d <> out.d
+        }.otherwise {
+          in.d.valid := headMature
+          in.d.bits := dataQ(head)
+          out.d.ready := enqReady
 
-        when(out.d.fire) {
-          dataQ(tail) := out.d.bits
-          releaseCycleQ(tail) := cycle + latency.U
-          tail := wrapInc(tail)
-        }
+          when(out.d.fire) {
+            dataQ(tail) := out.d.bits
+            releaseCycleQ(tail) := cycle + io.delayCycles
+            tail := wrapInc(tail)
+          }
 
-        when(deq) {
-          head := wrapInc(head)
-        }
+          when(deq) {
+            head := wrapInc(head)
+          }
 
-        switch(Cat(out.d.fire, deq)) {
-          is("b10".U) { count := count + 1.U }
-          is("b01".U) { count := count - 1.U }
+          switch(Cat(out.d.fire, deq)) {
+            is("b10".U) { count := count + 1.U }
+            is("b01".U) { count := count - 1.U }
+          }
         }
       }
     }
@@ -189,6 +199,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
   // Keep matrix requests out of L2 prefetch learning when true.
   val DISABLE_MATRIX_PREFETCH_TRAIN = false
   val DISABLE_NON_MATRIX_PREFETCH_TRAIN = true
+  val RELEASE_READ_PREFETCH_ON_CLEAN_EVICT = false
 
   // L2 bank count comes from the top-level test configuration.
   val l2 = LazyModule(new TL2TLCoupledL2()(baseConfig(1).alter((site, here, up) => {
@@ -209,6 +220,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
       )),
       disableMatrixPrefetchTrain = DISABLE_MATRIX_PREFETCH_TRAIN,
       disableNonMatrixPrefetchTrain = DISABLE_NON_MATRIX_PREFETCH_TRAIN,
+      releaseReadPrefetchOnCleanEvict = RELEASE_READ_PREFETCH_ON_CLEAN_EVICT,
       // tagECC = Some("secded"),
       // dataECC = Some("secded"),
       enableTagECC = false, //XS use true
@@ -271,7 +283,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
 
   val l2bankBinders = BankBinder(l2_banks, 64)
   val l3bankBinders = BankBinder(l3_banks, 64)
-  val memRespDelayer = LazyModule(new TLMemoryResponseDelayer(latency = 50, entries = 128))
+  val memRespDelayer = LazyModule(new TLMemoryResponseDelayer(maxLatency = 255, entries = 128))
   val ram = LazyModule(new TLRAM(AddressSet(0, 0xffff_ffffL), beatBytes = 32))
 
   c_nodes.zipWithIndex map{ case(c,i) =>
@@ -305,6 +317,10 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
     l2xbar
 
   lazy val module = new LazyModuleImp(this) {
+    // Hardware-side memory delay switch. Change these two values in Chisel when comparing setups.
+    val MEM_RESP_DELAY_ENABLE = false
+    val MEM_RESP_DELAY_CYCLES = 0
+
     val timer = IO(Input(UInt(64.W)))
     val logEnable = IO(Input(Bool()))
     val clean = IO(Input(Bool()))
@@ -314,6 +330,9 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
     dontTouch(logEnable)
     dontTouch(clean)
     dontTouch(dump)
+
+    memRespDelayer.module.io.enable := MEM_RESP_DELAY_ENABLE.B
+    memRespDelayer.module.io.delayCycles := MEM_RESP_DELAY_CYCLES.U
 
     XSLog.collect(timer, logEnable, clean, dump)
 

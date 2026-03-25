@@ -667,6 +667,8 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
       clients = meta.clients & Fill(clientBits, !snpToN),
       alias = meta.alias, //[Alias] Keep alias bits unchanged
       prefetch = !snpToN && meta_pft,
+      pfsrc = meta.prefetchSrc.getOrElse(PfSource.NoWhere.id.U),
+      pfneedT = meta.prefetchNeedT.getOrElse(false.B),
       accessed = !snpToN && meta.accessed
     )
     mp_probeack.metaWen := !req.snpHitReleaseToInval
@@ -789,6 +791,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
       alias = Some(aliasFinal),
       prefetch = req_prefetch || dirResult.hit && meta_pft,
       pfsrc = PfSource.fromMemReqSource(req.reqSource),
+      pfneedT = Mux(req_prefetch, req_needT, meta.prefetchNeedT.getOrElse(false.B)),
       accessed = req_acquire || req_get
     )
     mp_grant.metaWen := !cmo_cbo && !denied
@@ -833,6 +836,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
       clients = Fill(clientBits, true.B),
       alias = Some(merge_task.alias.getOrElse(0.U)),
       prefetch = false.B,
+      pfneedT = false.B,
       accessed = true.B
     )
 

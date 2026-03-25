@@ -229,8 +229,13 @@ trait HasCoupledL2Parameters {
   }
 
   def doEvict(meta: MetaEntry): Bool = {
+    val silentCleanReadPrefetch =
+      !cacheParams.releaseReadPrefetchOnCleanEvict.B &&
+      meta.prefetch.getOrElse(false.B) &&
+      !meta.prefetchNeedT.getOrElse(false.B) &&
+      !meta.dirty
     // AI-TODO: now for all branches without client
-    !(meta.state === MetaData.INVALID || (meta.state === MetaData.BRANCH && !meta.clients.orR))
+    !(meta.state === MetaData.INVALID || (meta.state === MetaData.BRANCH && !meta.clients.orR) || silentCleanReadPrefetch)
   }
 
   def sizeBytesToStr(sizeBytes: Double): String = sizeBytes match {
