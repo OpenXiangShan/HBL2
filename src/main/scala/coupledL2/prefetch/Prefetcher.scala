@@ -185,6 +185,7 @@ class PrefetchQueue(implicit p: Parameters) extends PrefetchModule {
   val io = IO(new Bundle {
     val enq = Flipped(DecoupledIO(new PrefetchReq))
     val deq = DecoupledIO(new PrefetchReq)
+    val flush = Input(Bool())
   })
   /*  Here we implement a queue that
    *  1. is pipelined  2. flows
@@ -198,17 +199,28 @@ class PrefetchQueue(implicit p: Parameters) extends PrefetchModule {
   val empty = head === tail && !valids.last
   val full = head === tail && valids.last
 
-  when(!empty && io.deq.ready) {
-    valids(head) := false.B
-    head := head + 1.U
-  }
-
-  when(io.enq.valid) {
-    queue(tail) := io.enq.bits
-    valids(tail) := !empty || !io.deq.ready // true.B
-    tail := tail + (!empty || !io.deq.ready).asUInt
-    when(full && !io.deq.ready) {
+  when(io.flush) {
+    valids.foreach(_ := false.B)
+    head := 0.U
+    tail := 0.U
+    when(io.enq.valid) {
+      queue(0) := io.enq.bits
+      valids(0) := true.B
+      tail := 1.U
+    }
+  }.otherwise {
+    when(!empty && io.deq.ready) {
+      valids(head) := false.B
       head := head + 1.U
+    }
+
+    when(io.enq.valid) {
+      queue(tail) := io.enq.bits
+      valids(tail) := !empty || !io.deq.ready // true.B
+      tail := tail + (!empty || !io.deq.ready).asUInt
+      when(full && !io.deq.ready) {
+        head := head + 1.U
+      }
     }
   }
 
@@ -399,14 +411,21 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
       Constantin.createRecord(s"l2_matrix_mlda_segment_count_slice${sliceIdx}_${cacheParams.hartId}", initValue = 0)
     })
 
-    val hardcodedTrainTrigger = io.train.valid &&
-      io.train.bits.reqsource === MemReqSource.CPUMatrixData.id.U &&
-      io.train.bits.isPut
-
     val hardcodedTrainSlice = if (bankBits == 0) 0.U(1.W) else io.train.bits.addr(offsetBits + bankBits - 1, offsetBits)
+    val hardcodedSliceSawMw = RegInit(VecInit(Seq.fill(hardcodedSliceCount)(false.B)))
+    val hardcodedTrainIsMatrix = io.train.bits.reqsource === MemReqSource.CPUMatrixData.id.U
+    val hardcodedTrainIsMw = hardcodedTrainIsMatrix && io.train.bits.isPut
+    val hardcodedTrainIsCr = hardcodedTrainIsMatrix && !io.train.bits.isPut
+    // Only MW and the CR stream participate in hardcoded issuance, and the first CR
+    // of a slice must wait until that slice has seen at least one MW.
+    val hardcodedTrainTrigger = io.train.valid &&
+      (hardcodedTrainIsMw || (hardcodedTrainIsCr && hardcodedSliceSawMw(hardcodedTrainSlice)))
+    val hardcodedLearnTrigger = io.train.valid && hardcodedTrainIsMw
     private val hardcodedMaxTrackedLines = 128
     val hardcodedSliceSeen = RegInit(VecInit(Seq.fill(hardcodedSliceCount)(false.B)))
     val hardcodedSliceSegment = RegInit(VecInit(Seq.fill(hardcodedSliceCount)(0.U(16.W))))
+    val hardcodedSliceIssueSegment = RegInit(VecInit(Seq.fill(hardcodedSliceCount)(0.U(16.W))))
+    val hardcodedSliceIssueLine = RegInit(VecInit(Seq.fill(hardcodedSliceCount)(0.U(16.W))))
     val hardcodedSliceSeenAddrValid = RegInit(VecInit(Seq.fill(hardcodedSliceCount)(
       VecInit(Seq.fill(hardcodedMaxTrackedLines)(false.B))
     )))
@@ -414,24 +433,31 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
 
     val selectedSliceSeen = hardcodedSliceSeen(hardcodedTrainSlice)
     val selectedSliceSegment = hardcodedSliceSegment(hardcodedTrainSlice)
+    val selectedSliceIssueSegment = hardcodedSliceIssueSegment(hardcodedTrainSlice)
+    val selectedSliceIssueLine = hardcodedSliceIssueLine(hardcodedTrainSlice)
     val selectedSliceSeenAddrValid = hardcodedSliceSeenAddrValid(hardcodedTrainSlice)
     val selectedSliceSeenAddr = hardcodedSliceSeenAddr(hardcodedTrainSlice)
     val hardcodedTrainAddrSeenBefore = VecInit(Seq.tabulate(hardcodedMaxTrackedLines) { idx =>
       selectedSliceSeenAddrValid(idx) && selectedSliceSeenAddr(idx) === io.train.bits.addr
     }).asUInt.orR
     val hardcodedSeenLineCount = PopCount(selectedSliceSeenAddrValid.asUInt)
-    val hardcodedTrainNewSegment = hardcodedTrainTrigger && selectedSliceSeen && hardcodedTrainAddrSeenBefore
+    val hardcodedTrainNewSegment = hardcodedLearnTrigger && selectedSliceSeen && hardcodedTrainAddrSeenBefore
     val hardcodedCurrentSegment = Mux(
       !selectedSliceSeen,
       0.U(16.W),
       Mux(hardcodedTrainNewSegment, selectedSliceSegment + 1.U, selectedSliceSegment)
     )
-    val hardcodedCurrentLine = Mux(
-      !selectedSliceSeen || hardcodedTrainNewSegment,
-      0.U(16.W),
-      hardcodedSeenLineCount
+    val hardcodedStartIssueWindow = hardcodedLearnTrigger && (!selectedSliceSeen || hardcodedTrainNewSegment)
+    val hardcodedIssueSegment = Mux(
+      hardcodedStartIssueWindow,
+      hardcodedCurrentSegment + 1.U,
+      selectedSliceIssueSegment
     )
-    val hardcodedPrefetchSegment = hardcodedCurrentSegment + 1.U
+    val hardcodedIssueLine = Mux(
+      hardcodedStartIssueWindow,
+      0.U(16.W),
+      selectedSliceIssueLine
+    )
     val selectedFirstBase = matrixMldAFirstBase(hardcodedTrainSlice)
     val selectedSegmentStride = matrixMldASegmentStride(hardcodedTrainSlice)
     val selectedIntraStride = matrixMldAIntraStride(hardcodedTrainSlice)
@@ -448,8 +474,8 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
     hardcodedReq := 0.U.asTypeOf(new PrefetchReq)
     val hardcodedAddrWide =
       selectedFirstBase +
-        hardcodedPrefetchSegment * selectedSegmentStride +
-        hardcodedCurrentLine * selectedIntraStride
+        hardcodedIssueSegment * selectedSegmentStride +
+        hardcodedIssueLine * selectedIntraStride
     val hardcodedAddr = hardcodedAddrWide(fullAddressBits - 1, 0)
     // hardcodedAddr keeps the full physical address learned from the trace.
     // PrefetchReq carries slice-local address bits, so parseAddress strips the slice id here.
@@ -466,10 +492,11 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
     val hardcodedReqValid = hardcodedTrainTrigger &&
       (selectedFirstBase =/= 0.U) &&
       (hardcodedPrefetchLineLimit =/= 0.U) &&
-      (hardcodedCurrentLine < hardcodedPrefetchLineLimit) &&
-      (hardcodedPrefetchSegment < selectedSegmentCount)
+      (hardcodedIssueLine < hardcodedPrefetchLineLimit) &&
+      (hardcodedIssueSegment < selectedSegmentCount)
 
     val pftQueue = Module(new PrefetchQueue)
+    val hardcodedQueues = Seq.fill(hardcodedSliceCount)(Module(new PrefetchQueue))
     val pipe = Module(new Pipeline(io.req.bits.cloneType, 1))
 
   val hasReceiverReq = if (hasReceiver) pfRcv.get.io.req.valid else false.B
@@ -499,31 +526,74 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
     }
     }
 
-    pftQueue.io.enq.valid := Mux(hardcodedPathEnable, hardcodedReqValid, prefetchReqArbValid)
-    pftQueue.io.enq.bits := Mux(hardcodedPathEnable, hardcodedReq, prefetchReqArbBits)
+    pftQueue.io.enq.valid := !hardcodedPathEnable && prefetchReqArbValid
+    pftQueue.io.enq.bits := prefetchReqArbBits
+    pftQueue.io.flush := false.B
+
+    val hardcodedEnqFireVec = Wire(Vec(hardcodedSliceCount, Bool()))
+    hardcodedEnqFireVec := VecInit(Seq.fill(hardcodedSliceCount)(false.B))
+
+    hardcodedQueues.zipWithIndex.foreach { case (queue, idx) =>
+      val queueSelected = hardcodedTrainSlice === idx.U
+      queue.io.enq.valid := hardcodedPathEnable && queueSelected && hardcodedReqValid
+      queue.io.enq.bits := hardcodedReq
+      queue.io.flush := hardcodedPathEnable && queueSelected && hardcodedStartIssueWindow
+      queue.io.deq.ready := false.B
+      hardcodedEnqFireVec(idx) := queue.io.enq.fire
+    }
 
     when (!hardcodedPathEnable) {
+      hardcodedSliceSawMw.foreach(_ := false.B)
       hardcodedSliceSeen.foreach(_ := false.B)
       hardcodedSliceSegment.foreach(_ := 0.U)
+      hardcodedSliceIssueSegment.foreach(_ := 0.U)
+      hardcodedSliceIssueLine.foreach(_ := 0.U)
       hardcodedSliceSeenAddrValid.foreach(_.foreach(_ := false.B))
-    }.elsewhen (hardcodedTrainTrigger) {
-      hardcodedSliceSeen(hardcodedTrainSlice) := true.B
-      hardcodedSliceSegment(hardcodedTrainSlice) := hardcodedCurrentSegment
-      when (hardcodedTrainNewSegment) {
-        hardcodedSliceSeenAddrValid(hardcodedTrainSlice).foreach(_ := false.B)
-        hardcodedSliceSeenAddrValid(hardcodedTrainSlice)(0) := true.B
-        hardcodedSliceSeenAddr(hardcodedTrainSlice)(0) := io.train.bits.addr
-      }.otherwise {
-        val allocIdx = PriorityEncoder(~selectedSliceSeenAddrValid.asUInt)
-        when (hardcodedSeenLineCount < hardcodedMaxTrackedLines.U) {
-          hardcodedSliceSeenAddrValid(hardcodedTrainSlice)(allocIdx) := true.B
-          hardcodedSliceSeenAddr(hardcodedTrainSlice)(allocIdx) := io.train.bits.addr
+    }.otherwise {
+      when (hardcodedTrainTrigger && hardcodedReqValid && hardcodedEnqFireVec(hardcodedTrainSlice)) {
+        hardcodedSliceIssueSegment(hardcodedTrainSlice) := hardcodedIssueSegment
+        hardcodedSliceIssueLine(hardcodedTrainSlice) := hardcodedIssueLine + 1.U
+      }.elsewhen (hardcodedStartIssueWindow) {
+        hardcodedSliceIssueSegment(hardcodedTrainSlice) := hardcodedIssueSegment
+        hardcodedSliceIssueLine(hardcodedTrainSlice) := 0.U
+      }
+
+      when (hardcodedLearnTrigger) {
+        hardcodedSliceSawMw(hardcodedTrainSlice) := true.B
+        hardcodedSliceSeen(hardcodedTrainSlice) := true.B
+        hardcodedSliceSegment(hardcodedTrainSlice) := hardcodedCurrentSegment
+        when (hardcodedTrainNewSegment) {
+          hardcodedSliceSeenAddrValid(hardcodedTrainSlice).foreach(_ := false.B)
+          hardcodedSliceSeenAddrValid(hardcodedTrainSlice)(0) := true.B
+          hardcodedSliceSeenAddr(hardcodedTrainSlice)(0) := io.train.bits.addr
+        }.otherwise {
+          val allocIdx = PriorityEncoder(~selectedSliceSeenAddrValid.asUInt)
+          when (hardcodedSeenLineCount < hardcodedMaxTrackedLines.U) {
+            hardcodedSliceSeenAddrValid(hardcodedTrainSlice)(allocIdx) := true.B
+            hardcodedSliceSeenAddr(hardcodedTrainSlice)(allocIdx) := io.train.bits.addr
+          }
         }
       }
     }
 
-  pipe.io.in <> pftQueue.io.deq
-  io.req <> pipe.io.out
+  val hardcodedDeqValidVec = VecInit(hardcodedQueues.map(_.io.deq.valid))
+  val hardcodedDeqBitsVec = VecInit(hardcodedQueues.map(_.io.deq.bits))
+  val selectedHardcodedDeqValid = hardcodedDeqValidVec(hardcodedTrainSlice)
+  val selectedHardcodedDeqBits = hardcodedDeqBitsVec(hardcodedTrainSlice)
+
+  hardcodedQueues.zipWithIndex.foreach { case (queue, idx) =>
+    queue.io.deq.ready := hardcodedPathEnable &&
+      hardcodedTrainTrigger &&
+      io.req.ready &&
+      hardcodedTrainSlice === idx.U
+  }
+
+  pipe.io.in.valid := !hardcodedPathEnable && pftQueue.io.deq.valid
+  pipe.io.in.bits := pftQueue.io.deq.bits
+  pipe.io.out.ready := !hardcodedPathEnable && io.req.ready
+  io.req.valid := Mux(hardcodedPathEnable, selectedHardcodedDeqValid && hardcodedTrainTrigger, pipe.io.out.valid)
+  io.req.bits := Mux(hardcodedPathEnable, selectedHardcodedDeqBits, pipe.io.out.bits)
+  pftQueue.io.deq.ready := pipe.io.in.ready
 
   val vbopTrainFire = if (hasBOP) vbop.get.io.train.fire else false.B
   val vbopRespFire = if (hasBOP) vbop.get.io.resp.fire else false.B
@@ -549,7 +619,12 @@ class Prefetcher(implicit p: Parameters) extends PrefetchModule {
     XSPerfAccumulate("prefetch_mode_pbop", !prefetchUseHardcodedMode)
     XSPerfAccumulate("prefetch_hardcoded_train_trigger", hardcodedPathEnable && hardcodedTrainTrigger)
     XSPerfAccumulate("prefetch_hardcoded_pending", false.B)
-    XSPerfAccumulate("prefetch_hardcoded_req_fire", hardcodedPathEnable && pftQueue.io.enq.fire && hardcodedReqValid)
+    XSPerfAccumulate(
+      "prefetch_hardcoded_req_fire",
+      hardcodedPathEnable &&
+        hardcodedReqValid &&
+        hardcodedEnqFireVec(hardcodedTrainSlice)
+    )
   // NOTE: set basicDB false when debug over
   // TODO: change the enable signal to not target the BOP
   class TrainEntry extends Bundle{

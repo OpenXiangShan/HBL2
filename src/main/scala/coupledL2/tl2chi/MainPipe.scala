@@ -715,8 +715,11 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     train =>
       // train on request(with needHint flag) miss or hit on prefetched block
       // trigger train also in a_merge here
-      train.valid := task_s3.valid && (!cacheParams.disableMatrixPrefetchTrain.B || !req_s3.matrixTask) && (!cacheParams.disableNonMatrixPrefetchTrain.B || req_s3.matrixTask) && ((req_acquire_s3 || req_get_s3) && req_s3.needHint.getOrElse(false.B) &&
-        (!dirResult_s3.hit || meta_s3.prefetch.get) || req_s3.mergeA)
+      train.valid := (task_s3.valid && (!cacheParams.disableMatrixPrefetchTrain.B || !req_s3.matrixTask) && (!cacheParams.disableNonMatrixPrefetchTrain.B || req_s3.matrixTask) && ((req_acquire_s3 || req_get_s3) && req_s3.needHint.getOrElse(false.B) &&
+        (!dirResult_s3.hit || meta_s3.prefetch.get) || req_s3.mergeA)) ||
+        (task_s3.valid && !cacheParams.disableMatrixPrefetchTrain.B && req_s3.matrixTask &&
+          ((req_s3.opcode === PutFullData && !req_s3.modify) ||
+            (req_s3.opcode === Get && req_s3.modify)))
       train.bits.tag := req_s3.tag
       train.bits.set := req_s3.set
       train.bits.needT := Mux(
