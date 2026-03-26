@@ -175,7 +175,7 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
                               meta_s3.alias.getOrElse(0.U) =/= req_s3.alias.getOrElse(0.U)
 
   val mshr_refill_s3 = (mshr_accessackdata_s3 || mshr_hintack_s3 || mshr_grant_s3 || mshr_accessack_s3) // needs refill to L2 DS
-  val retry = io.replResp.bits.retry
+  val retry = io.replResp.valid && io.replResp.bits.retry
   val need_repl = doEvict(io.replResp.bits.meta) && req_s3.replTask // Grant needs replacement
 
   val meta_s3_rmw = dirResult_s3.rmw
