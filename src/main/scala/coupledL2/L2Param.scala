@@ -132,6 +132,8 @@ case class L2Param(
   elaboratedTopDown: Boolean = true,
   // MultiCycle-Path-2 for Data SRAM
   enableMCP2: Boolean = true,
+  // Enable rmw data kept in L2
+  enableRMW: Boolean = false,
   // env
   FPGAPlatform: Boolean = false,
   // ECC
