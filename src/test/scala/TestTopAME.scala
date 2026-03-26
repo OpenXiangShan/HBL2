@@ -157,7 +157,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
           name = s"l2",
           sets = l2_sets * l2_banks,
           ways = l2_ways + 2,
-          blockGranularity = log2Ceil(128)
+          blockGranularity = log2Ceil(l2_sets)
         ),
       ),
       echoField = Seq(DirtyField()),
