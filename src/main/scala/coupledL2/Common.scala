@@ -301,8 +301,13 @@ class MSHRInfo(implicit p: Parameters) extends L2Bundle with HasTLChannelBits {
   val mergeA = Bool() // whether the mshr already merge an acquire(avoid alias merge)
 
   val w_grantfirst = Bool()
+  val w_grantlast = Bool()
+  val w_pprobeacklast = Bool()
   val s_release = Bool()
   val s_refill = Bool()
+  val s_acquire = Bool()
+  val s_rprobe = Bool()
+  val s_pprobe = Bool()
   val s_cmoresp = Bool()
   val s_cmometaw = Bool()
   val w_releaseack = Bool()

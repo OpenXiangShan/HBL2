@@ -502,6 +502,16 @@ class Directory(implicit p: Parameters) extends L2Module {
     resetIdx := resetIdx - 1.U
   }
 
+  val dirReadBlocked = io.read.valid && !io.read.ready
+  val dirIdle = !io.read.valid && !metaWen && !tagWen && !replacerWen
   XSPerfAccumulate("dirRead_cnt", io.read.fire)
+  XSPerfAccumulate("dirIdle_cycles", dirIdle)
+  XSPerfAccumulate("dirRead_blocked", dirReadBlocked)
+  XSPerfAccumulate("dirRead_blocked_by_meta_write", io.read.valid && metaWen)
+  XSPerfAccumulate("dirRead_blocked_by_tag_write", io.read.valid && tagWen)
+  XSPerfAccumulate("dirRead_blocked_by_replacer_write", io.read.valid && replacerWen)
+  XSPerfAccumulate("dirMetaWrite_cnt", metaWen)
+  XSPerfAccumulate("dirTagWrite_cnt", tagWen)
+  XSPerfAccumulate("dirReplacerWrite_cnt", replacerWen)
   XSPerfAccumulate("choose_busy_way", reqValid_s3 && !req_s3.wayMask(chosenWay))
 }

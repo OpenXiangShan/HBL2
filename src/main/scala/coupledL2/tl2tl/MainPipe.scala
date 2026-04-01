@@ -152,8 +152,12 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
 
   val req_acquire_s3        = sinkA_req_s3 && (req_s3.opcode === AcquireBlock || req_s3.opcode === AcquirePerm)
   val req_acquireBlock_s3   = sinkA_req_s3 && req_s3.opcode === AcquireBlock
+  val req_acquirePerm_s3    = sinkA_req_s3 && req_s3.opcode === AcquirePerm
   val req_prefetch_s3       = sinkA_req_s3 && req_s3.opcode === Hint
+  val req_probe_s3          = sinkB_req_s3 && req_s3.opcode === Probe
   val req_get_s3            = sinkA_req_s3 && req_s3.opcode === Get
+  val req_release_s3        = sinkC_req_s3 && req_s3.opcode === Release
+  val req_releaseData_s3    = sinkC_req_s3 && req_s3.opcode === ReleaseData
   val req_put_s3            = sinkA_req_s3 && req_s3.opcode === PutFullData
 
   val mshr_grant_s3         = mshr_req_s3 && req_s3.fromA && (req_s3.opcode === Grant || req_s3.opcode === GrantData) // Grant or GrantData from mshr
@@ -778,10 +782,15 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
   // directory access result
   val hit_s3 = task_s3.valid && !mshr_req_s3 && dirResult_s3.hit
   val miss_s3 = task_s3.valid && !mshr_req_s3 && !dirResult_s3.hit
+  XSPerfAccumulate("acquireBlock", task_s3.valid && req_acquireBlock_s3)
+  XSPerfAccumulate("acquirePerm", task_s3.valid && req_acquirePerm_s3)
   XSPerfAccumulate("a_req_hit", hit_s3 && req_s3.fromA)
   XSPerfAccumulate("acquire_hit", hit_s3 && req_s3.fromA &&
     (req_s3.opcode === AcquireBlock || req_s3.opcode === AcquirePerm))
+  XSPerfAccumulate("probe", task_s3.valid && req_probe_s3)
   XSPerfAccumulate("get_hit", hit_s3 && req_s3.fromA && req_s3.opcode === Get)
+  XSPerfAccumulate("release", task_s3.valid && req_release_s3)
+  XSPerfAccumulate("releaseData", task_s3.valid && req_releaseData_s3)
   XSPerfAccumulate("retry", mshr_refill_s3 && retry)
 
   XSPerfAccumulate("a_req_miss", miss_s3 && req_s3.fromA)

@@ -1339,8 +1339,13 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
   io.msInfo.bits.param := req.param
   io.msInfo.bits.mergeA := mergeA
   io.msInfo.bits.w_grantfirst := state.w_grantfirst
+  io.msInfo.bits.w_grantlast := state.w_grantlast
+  io.msInfo.bits.w_pprobeacklast := state.w_pprobeacklast
   io.msInfo.bits.s_release := state.s_release
   io.msInfo.bits.s_refill := state.s_refill
+  io.msInfo.bits.s_acquire := state.s_acquire
+  io.msInfo.bits.s_rprobe := state.s_rprobe
+  io.msInfo.bits.s_pprobe := state.s_pprobe
   io.msInfo.bits.s_cmoresp := state.s_cmoresp
   io.msInfo.bits.s_cmometaw := state.s_cmometaw
   io.msInfo.bits.w_releaseack := state.w_releaseack

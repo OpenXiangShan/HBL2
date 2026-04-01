@@ -187,7 +187,100 @@ class MSHRCtl(implicit p: Parameters) extends L2Module with HasPerfEvents {
     }
   }
 
+  class MSHRStateLogEntry extends Bundle {
+    val req_valid = Bool()
+    val wait_rprobeack = Bool()
+    val wait_pprobeack = Bool()
+    val wait_grant = Bool()
+    val wait_releaseack = Bool()
+  }
+
+  class MSHRSnapshotEntry extends Bundle {
+    val req_valid = Bool()
+    val wait_rprobeack = Bool()
+    val wait_pprobeack = Bool()
+    val wait_grant = Bool()
+    val wait_releaseack = Bool()
+  }
+
   // Performance counters
+  val mshrValidVec = mshrs.map(_.io.status.valid)
+  val mshrWaitRProbeAckVec = mshrs.map(m => m.io.msInfo.valid && !m.io.msInfo.bits.w_rprobeacklast)
+  val mshrWaitPProbeAckVec = mshrs.map(m => m.io.msInfo.valid && !m.io.msInfo.bits.w_pprobeacklast)
+  val mshrWaitGrantVec = mshrs.map(m => m.io.msInfo.valid && !m.io.msInfo.bits.w_grantlast)
+  val mshrWaitReleaseAckVec = mshrs.map(m => m.io.msInfo.valid && !m.io.msInfo.bits.w_releaseack)
+  val mshrFromAVec = mshrs.map(m => m.io.status.valid && m.io.status.bits.fromA)
+  val mshrFromBVec = mshrs.map(m => m.io.status.valid && m.io.status.bits.fromB)
+  val mshrNeedReleaseVec = mshrs.map(m => m.io.msInfo.valid && m.io.msInfo.bits.needRelease)
+  val mshrBlockRefillVec = mshrs.map(m => m.io.msInfo.valid && m.io.msInfo.bits.blockRefill)
+  val mshrReleaseSchedVec = mshrs.map(m => m.io.msInfo.valid && !m.io.msInfo.bits.s_release)
+  val mshrReleaseAckWaitVec = mshrWaitReleaseAckVec
+
+  // Layer 1: transition log for per-MSHR state changes.
+  val mshrStateNow = VecInit((0 until mshrsAll).map { i =>
+    Cat(
+      mshrs(i).io.msInfo.valid,
+      mshrWaitRProbeAckVec(i),
+      mshrWaitPProbeAckVec(i),
+      mshrWaitGrantVec(i),
+      mshrWaitReleaseAckVec(i)
+    )
+  })
+  val mshrStatePrev = RegNext(mshrStateNow, 0.U.asTypeOf(mshrStateNow))
+  val mshrStateDB = ChiselDB.createTable("L2MSHRStateDB", new MSHRStateLogEntry, basicDB = true)
+  mshrs.zipWithIndex.foreach {
+    case (m, i) =>
+      val stateLog = Wire(new MSHRStateLogEntry)
+      stateLog.req_valid := m.io.msInfo.valid
+      stateLog.wait_rprobeack := mshrWaitRProbeAckVec(i)
+      stateLog.wait_pprobeack := mshrWaitPProbeAckVec(i)
+      stateLog.wait_grant := mshrWaitGrantVec(i)
+      stateLog.wait_releaseack := mshrWaitReleaseAckVec(i)
+      val stateChange = mshrStateNow(i) =/= mshrStatePrev(i)
+      mshrStateDB.log(stateLog, stateChange, i.toString, clock, reset)
+  }
+
+  // Layer 2: periodic snapshot with a configurable sampling period.
+  val mshrSnapshotDB = ChiselDB.createTable("L2MSHRSnapshotDB", new MSHRSnapshotEntry, basicDB = true)
+  val mshrSnapshotPeriod = 10
+  val snapshotCnt = RegInit(0.U(log2Ceil(mshrSnapshotPeriod).W))
+  val snapshotTick = snapshotCnt === (mshrSnapshotPeriod - 1).U
+  snapshotCnt := Mux(snapshotTick, 0.U, snapshotCnt + 1.U)
+  mshrs.zipWithIndex.foreach {
+    case (m, i) =>
+      val snapshot = Wire(new MSHRSnapshotEntry)
+      snapshot.req_valid := m.io.msInfo.valid
+      snapshot.wait_rprobeack := mshrWaitRProbeAckVec(i)
+      snapshot.wait_pprobeack := mshrWaitPProbeAckVec(i)
+      snapshot.wait_grant := mshrWaitGrantVec(i)
+      snapshot.wait_releaseack := mshrWaitReleaseAckVec(i)
+      mshrSnapshotDB.log(snapshot, snapshotTick, i.toString, clock, reset)
+  }
+
+  XSPerfAccumulate("mshr_occupancy_cycles", PopCount(VecInit(mshrValidVec)))
+  XSPerfAccumulate("mshr_occupancy_fromA_cycles", PopCount(VecInit(mshrFromAVec)))
+  XSPerfAccumulate("mshr_occupancy_fromB_cycles", PopCount(VecInit(mshrFromBVec)))
+  XSPerfAccumulate("mshr_needRelease_cycles", PopCount(VecInit(mshrNeedReleaseVec)))
+  XSPerfAccumulate("mshr_blockRefill_cycles", PopCount(VecInit(mshrBlockRefillVec)))
+  XSPerfAccumulate("mshr_release_sched_cycles", PopCount(VecInit(mshrReleaseSchedVec)))
+  XSPerfAccumulate("mshr_release_waitAck_cycles", PopCount(VecInit(mshrReleaseAckWaitVec)))
+
+  XSPerfAccumulate("mshr_alloc_total", io.fromMainPipe.mshr_alloc_s3.valid)
+  XSPerfAccumulate("mshr_alloc_fromA", io.fromMainPipe.mshr_alloc_s3.valid && io.fromMainPipe.mshr_alloc_s3.bits.task.fromA)
+  XSPerfAccumulate("mshr_alloc_fromB", io.fromMainPipe.mshr_alloc_s3.valid && io.fromMainPipe.mshr_alloc_s3.bits.task.fromB)
+  XSPerfAccumulate("mshr_alloc_needRelease", io.fromMainPipe.mshr_alloc_s3.valid && io.fromMainPipe.mshr_alloc_s3.bits.state.s_release)
+
+  // Layer 3: precise dwell-time counters for key schedule/wait states.
+  XSPerfAccumulate("mshr_s_acquire_cycles", PopCount(VecInit(mshrs.map(m => m.io.msInfo.valid && !m.io.msInfo.bits.s_acquire))))
+  XSPerfAccumulate("mshr_s_rprobe_cycles", PopCount(VecInit(mshrs.map(m => m.io.msInfo.valid && !m.io.msInfo.bits.s_rprobe))))
+  XSPerfAccumulate("mshr_s_pprobe_cycles", PopCount(VecInit(mshrs.map(m => m.io.msInfo.valid && !m.io.msInfo.bits.s_pprobe))))
+  XSPerfAccumulate("mshr_s_release_cycles", PopCount(VecInit(mshrs.map(m => m.io.msInfo.valid && !m.io.msInfo.bits.s_release))))
+  XSPerfAccumulate("mshr_s_refill_cycles", PopCount(VecInit(mshrs.map(m => m.io.msInfo.valid && !m.io.msInfo.bits.s_refill))))
+  XSPerfAccumulate("mshr_w_rprobeacklast_cycles", PopCount(VecInit(mshrWaitRProbeAckVec)))
+  XSPerfAccumulate("mshr_w_pprobeacklast_cycles", PopCount(VecInit(mshrWaitPProbeAckVec)))
+  XSPerfAccumulate("mshr_w_grantlast_cycles", PopCount(VecInit(mshrWaitGrantVec)))
+  XSPerfAccumulate("mshr_w_releaseack_cycles", PopCount(VecInit(mshrWaitReleaseAckVec)))
+
   XSPerfAccumulate("capacity_conflict_to_sinkA", a_mshrFull)
   XSPerfAccumulate("capacity_conflict_to_sinkB", mshrFull)
   XSPerfHistogram("mshr_alloc", io.toMainPipe.mshr_alloc_ptr,
