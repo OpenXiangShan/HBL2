@@ -102,10 +102,12 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
   val c_nodes = Seq(l1d)
   val l1i_nodes = Seq(l1i)
 
-  val l2_sets = 128 // standard 512
-  val l2_ways = 8
-  val l3_sets = 512 // standard 8192
-  val l3_ways = 8 // standard 16
+  val l2_sets = TestTopIniParams.l2Sets
+  val l2_ways = TestTopIniParams.l2Ways
+  val l3cdir_sets = TestTopIniParams.l3CDirSets
+  val l3cdir_ways = TestTopIniParams.l3CDirWays
+  val l3_sets = TestTopIniParams.l3Sets
+  val l3_ways = TestTopIniParams.l3Ways
 
   // 2MB L2 Cache with 8 banks
   val l2 = LazyModule(new TL2TLCoupledL2()(baseConfig(1).alter((site, here, up) => {
@@ -138,7 +140,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
     )
     case PerfCounterOptionsKey => PerfCounterOptions(
       here(L2ParamKey).enablePerf && !here(L2ParamKey).FPGAPlatform,
-      here(L2ParamKey).enableRollingDB && !here(L2ParamKey).FPGAPlatform,
+      false,
       XSPerfLevel.withName("VERBOSE"),
       0
     )
@@ -155,9 +157,9 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
       clientCaches = Seq(
         CacheParameters(
           name = s"l2",
-          sets = l2_sets * l2_banks,
-          ways = l2_ways + 2,
-          blockGranularity = log2Ceil(l2_sets)
+          sets = l3cdir_sets,
+          ways = l3cdir_ways,
+          blockGranularity = log2Ceil(l3cdir_sets)
         ),
       ),
       echoField = Seq(DirtyField()),
