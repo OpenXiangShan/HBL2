@@ -31,10 +31,12 @@ class SourceMX(implicit p: Parameters) extends L2Module {
   def isCPutFull(cbits: TLBundleC): Bool = cbits.opcode === PutFullData
 
   // When c issues PutFullData, transform it into an A-channel PutFullData and send to out_a
+  // Prefer C over A: if C is a PutFullData and valid, accept it and stall A.
   when(isCPutFull(c) && io.c.valid) {
     out_c.valid := false.B
 
-    when(!io.a.valid) {
+    // drive out_a with C when the downstream is ready; give C precedence over A
+    when(io.out_a.ready) {
         out_a.bits.opcode := PutFullData
         out_a.bits.param := 0.U
         out_a.bits.data := c.data
@@ -55,7 +57,7 @@ class SourceMX(implicit p: Parameters) extends L2Module {
 
   // Ready signals:
   // - a ready follows out_a.ready normally
-  // - c ready follows out_c.ready normally; but if c is PutFullData, drive by out_a.ready and avoid conflict with a.valid
-  io.a.ready := out_a.ready
-  io.c.ready := Mux(isCPutFull(c), io.out_a.ready && !io.a.valid, io.out_c.ready)
+  // - c ready follows out_c.ready normally; but if c is PutFullData we give C precedence and stall A
+  io.a.ready := Mux(isCPutFull(c) && io.c.valid, false.B, out_a.ready)
+  io.c.ready := Mux(isCPutFull(c), io.out_a.ready, io.out_c.ready)
 }
