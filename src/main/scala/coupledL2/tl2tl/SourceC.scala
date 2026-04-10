@@ -163,24 +163,21 @@ class SourceC(implicit p: Parameters) extends L2Module {
   io.toReqArb.blockMSHRReqEntrance := noSpaceForMSHRReq
 
   // dequeued task, the only, ready to fire
-  // WARNING: !it will reduce Release bandwidth to half!!!
-  // TODO: change it the same way as GrantBuf
-  val beatValids = RegInit(VecInit(Seq.fill(beatSize)(false.B)))
-  val taskValid = beatValids.asUInt.orR
-  val taskR = RegInit(0.U.asTypeOf(new Bundle() {
-    val task = new TaskBundle()
-    val data = new DSBlock()
-  }))
+  require(beatSize == 2)
+  val deqValid = queue.io.deq.valid
+  val deqTask = queue.io.deq.bits
+  val deqData = VecInit(Seq(queueData0.io.deq.bits, queueData1.io.deq.bits))
+  val isPut = deqTask.matrixTask
+  val outOpcode = Mux(isPut, TLMessages.PutFullData, deqTask.opcode)
+  val hasData = outOpcode(0) || outOpcode === TLMessages.PutFullData
+  val singleBeat = !hasData
+  val sendingNextBeat = RegInit(false.B)
+  when(io.out.fire && !singleBeat) { sendingNextBeat := !sendingNextBeat }
 
-  val dequeueReady = !taskValid
+  val dequeueReady = (singleBeat || sendingNextBeat) && io.out.ready
   queue.io.deq.ready := dequeueReady
   queueData0.io.deq.ready := dequeueReady
   queueData1.io.deq.ready := dequeueReady
-  when(queue.io.deq.valid && dequeueReady) {
-    beatValids.foreach(_ := true.B)
-    taskR.task := queue.io.deq.bits
-    taskR.data := Cat(queueData1.io.deq.bits.data, queueData0.io.deq.bits.data).asTypeOf(new DSBlock)
-  }
 
   def toTLBundleC(task: TaskBundle, isPut: Bool = false.B, data: UInt = 0.U) = {
     val c = Wire(new TLBundleC(edgeOut.bundle))
@@ -196,33 +193,12 @@ class SourceC(implicit p: Parameters) extends L2Module {
     c
   }
 
-  def getBeat(data: UInt, beatsOH: UInt): (UInt, UInt) = {
-    // get one beat from data according to beatsOH
-    require(data.getWidth == (blockBytes * 8))
-    require(beatsOH.getWidth == beatSize)
-    // next beat
-    val next_beat = ParallelPriorityMux(beatsOH, data.asTypeOf(Vec(beatSize, UInt((beatBytes * 8).W))))
-    val selOH = PriorityEncoderOH(beatsOH)
-    // remaining beats that haven't been sent out
-    val next_beatsOH = beatsOH & ~selOH
-    (next_beat, next_beatsOH)
-  }
-
-  val data = taskR.data.data
-  val beatsOH = beatValids.asUInt
-  val (beat, next_beatsOH) = getBeat(data, beatsOH)
-
-  io.out.valid := taskValid
-  io.out.bits := toTLBundleC(taskR.task, taskR.task.matrixTask, beat)
-
-  val hasData = io.out.bits.opcode(0) || io.out.bits.opcode === TLMessages.PutFullData
-  when (io.out.fire) {
-    when (hasData) {
-      beatValids := VecInit(next_beatsOH.asBools)
-    }.otherwise {
-      beatValids.foreach(_ := false.B)
-    }
-  }
+  io.out.valid := deqValid
+  io.out.bits := toTLBundleC(
+    deqTask,
+    isPut,
+    Mux(sendingNextBeat, deqData(1).data, deqData(0).data)
+  )
 
   assert(io.in.ready, "SourceC should never be full") // this should be deprecated, since now we have back pressure logic
 
