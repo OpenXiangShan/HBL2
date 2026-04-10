@@ -440,7 +440,9 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
     accessed = true.B,
     tagErr = Mux(wen_c, req_s3.denied, meta_s3.tagErr),
     dataErr = Mux(wen_c, req_s3.corrupt, meta_s3.dataErr),
-    local = meta_s3.local
+    // If Put is a miss but does not trigger replacement, mark block as local
+    // so downstream writeback/Release logic treats it appropriately.
+    local = meta_s3.local || (req_put_s3 && !dirResult_s3.hit)
   )
 
   val metaW_s3_probed = WireInit(meta_s3)
