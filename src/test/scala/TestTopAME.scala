@@ -117,7 +117,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
       sets = l2_sets,
       channelBytes        = TLChannelBeatBytes(32),
       blockBytes          = 64,
-      clientCaches = Seq(L1Param(aliasBitsOpt = Some(2), vaddrBitsOpt = Some(16))),
+      clientCaches = Seq(L1Param(aliasBitsOpt = Some(2))),
       echoField = Seq(DirtyField()),
       // prefetch = Seq(BOPParameters(
       //   rrTableEntries = 16,
@@ -130,6 +130,7 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
       enableMCP2 = false,
       enableRollingDB = false,
       // dataCheck = Some("oddparity"),
+      enablePoison = false,
     )
     // case huancun.BankBitsKey => log2Ceil(8)
     case BankBitsKey => log2Ceil(l2_banks)
@@ -272,9 +273,9 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
    */
 
 object TestTop_L2L3_AME extends App {
-  val l2_banks=2
-  val l3_banks=2
-  val m_num=l2_banks
+  val l2_banks = TestTopIniParams.l2Banks
+  val l3_banks = TestTopIniParams.l3Banks
+  val m_num = l2_banks
 
   val config = baseConfigAME(1,l2_banks,l3_banks,m_num).alterPartial({
     case L2ParamKey => L2Param(

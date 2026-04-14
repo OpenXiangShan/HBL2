@@ -212,6 +212,7 @@ class SinkA(implicit p: Parameters) extends L2Module {
   XSPerfAccumulate("sinkA_acquireblock_req", io.a.fire && io.a.bits.opcode === AcquireBlock)
   XSPerfAccumulate("sinkA_acquireperm_req", io.a.fire && io.a.bits.opcode === AcquirePerm)
   XSPerfAccumulate("sinkA_get_req", io.a.fire && io.a.bits.opcode === Get)
+  XSPerfAccumulate("sinkA_put_req", io.a.fire && (io.a.bits.opcode === PutFullData || io.a.bits.opcode === PutPartialData))
   prefetchOpt.foreach {
     _ =>
       XSPerfAccumulate("sinkA_prefetch_req", io.prefetchReq.get.fire)
