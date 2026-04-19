@@ -41,6 +41,20 @@ trait HasTLChannelBits { this: Bundle =>
   def fromC = channel(2).asBool
 }
 
+object MatrixInfo {
+  def width = 2
+  def isMatrix(m: UInt): Bool = m(0)
+}
+
+trait HasMatrixType {
+  val matrixType = UInt(3.W)
+  def isMatrix = matrixType.orR
+  def isA = matrixType(0).asBool
+  def isB = matrixType(1).asBool
+  def isC = matrixType(2).asBool
+  def isAB = !isC
+}
+
 class MergeTaskBundle(implicit p: Parameters) extends L2Bundle {
   val off = UInt(offsetBits.W)
   val alias = aliasBitsOpt.map(_ => UInt(aliasBitsOpt.get.W)) // color bits in cache-alias issue
@@ -111,6 +125,10 @@ class TaskBundle(implicit p: Parameters) extends L2Bundle
   // for CMO
   val cmoTask = Bool() // cmo with address
   val cmoAll = Bool()  // cmo without address but to flush whole L2$ to memory 
+
+  val ameChannel = Option.when(enableMatrix)(UInt(4.W))
+  val ameIndex = Option.when(enableMatrix)(UInt(7.W))
+  val matrixTask = Option.when(enableMatrix)(Bool())
 
   // for TopDown Monitor (# TopDown)
   val reqSource = UInt(MemReqSource.reqSourceBits.W)

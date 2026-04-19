@@ -52,6 +52,7 @@ class SinkA(implicit p: Parameters) extends L2Module {
   io.cmoAll.foreach { cmoAll => cmoAll.cmoAllBlock := cmoAllBlock }
 
   def fromTLAtoTaskBundle(a: TLBundleA): TaskBundle = {
+    val matrixKey = a.user.lift(MatrixKey).getOrElse(0.U)
     val task = Wire(new TaskBundle)
     task := 0.U.asTypeOf(new TaskBundle)
     task.channel := "b001".U
@@ -83,6 +84,9 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.wayMask := 0.U(cacheParams.ways.W)
     task.reqSource := a.user.lift(utility.ReqSourceKey).getOrElse(MemReqSource.NoWhere.id.U)
     task.replTask := false.B
+    task.matrixTask.foreach(_ := MatrixInfo.isMatrix(matrixKey))
+    task.ameChannel.foreach(_ := a.user.lift(AmeChannelKey).getOrElse("b1000".U))
+    task.ameIndex.foreach(_ := a.user.lift(AmeIndexKey).getOrElse(0.U))
     task.vaddr.foreach(_ := a.user.lift(VaddrKey).getOrElse(0.U))
     task.pc.foreach(_ := a.user.lift(PCKey).getOrElse(0.U)) 
     //miss acquire keyword
@@ -124,6 +128,9 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.wayMask := 0.U(cacheParams.ways.W)
     task.reqSource := req.pfSource
     task.replTask := false.B
+    task.matrixTask.foreach(_ := false.B)
+    task.ameChannel.foreach(_ := 0.U)
+    task.ameIndex.foreach(_ := 0.U)
     task.vaddr.foreach(_ := req.vaddr.getOrElse(0.U))
     task.pc.foreach(_ := 0.U)  
     task.isKeyword.foreach(_ := false.B)
