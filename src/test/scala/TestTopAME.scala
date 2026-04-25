@@ -259,8 +259,8 @@ class TestTop_L2L3_AME()(implicit p: Parameters) extends LazyModule {
     l2.module.io.debugTopDown <> DontCare
     l2.module.io.matrixDataOut512L2 <> DontCare
     // For matrix get , l2 return data
-    val matrix_data_out = IO(Vec(l2_banks, DecoupledIO(new MatrixDataBundle())))
-    matrix_data_out <> l2.module.io.matrixDataOut512L2
+    val matrix_data_out = IO(Vec(1, Vec(l2_banks, DecoupledIO(new MatrixDataBundle()))))
+    matrix_data_out.head <> l2.module.io.matrixDataOut512L2
   }
 
 }
