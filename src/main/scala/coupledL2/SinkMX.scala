@@ -49,54 +49,23 @@ class SinkMX(implicit p: Parameters) extends L2Module {
   val matrixPutC = WireDefault(0.U.asTypeOf(new TLBundleC(edgeIn.bundle)))
   val outCLock = RegInit(false.B)
   val lockedIsMatrixPut = RegInit(false.B)
-  val outCMultibeatActive = RegInit(false.B)
   val matrixPutValid = io.a.valid && isMatrixPut(a)
   val (outCFirst, outCLast, _) = edgeIn.firstlast(io.out_c.bits, io.out_c.fire)
-  val lockedTxn = RegEnable(io.out_c.bits, 0.U.asTypeOf(io.out_c.bits), io.out_c.fire && outCFirst)
 
-  def matchesLockedTxn(c: TLBundleC): Bool = {
-    c.opcode === lockedTxn.opcode &&
-    c.param === lockedTxn.param &&
-    c.size === lockedTxn.size &&
-    c.source === lockedTxn.source &&
-    c.address === lockedTxn.address
-  }
-
-  val nativeCMatchesLock = io.c.valid && matchesLockedTxn(io.c.bits)
-  val matrixPutMatchesLock = matrixPutValid && matchesLockedTxn(matrixPutC)
   val idleSelectNativeC = io.c.valid
   val idleSelectMatrixPut = matrixPutValid && !io.c.valid
-  val selectNativeC = Mux(outCLock, !lockedIsMatrixPut, idleSelectNativeC)
   val selectMatrixPut = Mux(outCLock, lockedIsMatrixPut, idleSelectMatrixPut)
-  val lockedNativeCValid = outCLock && !lockedIsMatrixPut && nativeCMatchesLock
-  val lockedMatrixPutValid = outCLock && lockedIsMatrixPut && matrixPutMatchesLock
-  val outCNativeValid = Mux(outCLock, lockedNativeCValid, idleSelectNativeC)
-  val outCMatrixValid = Mux(outCLock, lockedMatrixPutValid, idleSelectMatrixPut)
+  val outCNativeValid = Mux(outCLock, !lockedIsMatrixPut && io.c.valid, idleSelectNativeC)
+  val outCMatrixValid = Mux(outCLock, lockedIsMatrixPut && matrixPutValid, idleSelectMatrixPut)
   val matrixPutBlocked = matrixPutValid && !outCMatrixValid
-
-  when(outCMultibeatActive && io.out_c.fire) {
-    assert(matchesLockedTxn(io.out_c.bits),
-      "SinkMX out_c metadata changed within multibeat operation")
-  }
-
-  when(outCLock && lockedIsMatrixPut && io.a.valid) {
-    assert(isMatrixPut(a), "SinkMX locked matrix put ingress changed away from matrix put")
-    assert(matrixPutMatchesLock, "SinkMX locked matrix put tuple changed within multibeat operation")
-  }
-
-  when(outCLock && !lockedIsMatrixPut && io.c.valid) {
-    assert(nativeCMatchesLock, "SinkMX locked native C tuple changed within multibeat operation")
-  }
 
   when(io.out_c.fire) {
     when(outCFirst && !outCLast) {
       outCLock := true.B
       lockedIsMatrixPut := selectMatrixPut
-      outCMultibeatActive := true.B
     }.elsewhen(outCLast) {
       outCLock := false.B
       lockedIsMatrixPut := false.B
-      outCMultibeatActive := false.B
     }
   }
 
@@ -130,4 +99,27 @@ class SinkMX(implicit p: Parameters) extends L2Module {
     io.out_a.bits.param := Mux(isRMW, NtoT, NtoB)
   }
 
+  if (!cacheParams.FPGAPlatform) {
+    val lockedTxn = RegEnable(io.out_c.bits, 0.U.asTypeOf(io.out_c.bits), io.out_c.fire && outCFirst)
+    val lockedIngressValid = Mux(lockedIsMatrixPut, matrixPutValid, io.c.valid)
+    val lockedIngressBits = Mux(lockedIsMatrixPut, matrixPutC, io.c.bits)
+
+    def matchesLockedTxn(c: TLBundleC): Bool = {
+      c.opcode === lockedTxn.opcode &&
+      c.param === lockedTxn.param &&
+      c.size === lockedTxn.size &&
+      c.source === lockedTxn.source &&
+      c.address === lockedTxn.address
+    }
+
+    when(outCLock && io.out_c.fire) {
+      assert(matchesLockedTxn(io.out_c.bits),
+        "out_c metadata mismatch: beat changed from locked first beat")
+    }
+
+    when(outCLock && lockedIngressValid) {
+      assert(matchesLockedTxn(lockedIngressBits),
+        "upstream metadata mismatch: input changed from locked first beat")
+    }
+  }
 }
