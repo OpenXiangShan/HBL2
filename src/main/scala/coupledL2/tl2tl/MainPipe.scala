@@ -248,6 +248,9 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
   ms_task.denied           := false.B
   ms_task.corrupt          := false.B
   ms_task.cmoAll           := false.B
+  ms_task.ameChannel.foreach(_ := req_s3.ameChannel.getOrElse(0.U))
+  ms_task.ameIndex.foreach(_ := req_s3.ameIndex.getOrElse(0.U))
+  ms_task.matrixTask.foreach(_ := req_s3.matrixTask.getOrElse(false.B))
   /* ======== Resps to SinkA/B/C Reqs ======== */
   val sink_resp_s3 = WireInit(0.U.asTypeOf(Valid(new TaskBundle))) // resp for sinkA/B/C request that does not need to alloc mshr
   val sink_resp_s3_a_promoteT = dirResult_s3.hit && isT(meta_s3.state)

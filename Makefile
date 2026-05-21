@@ -1,6 +1,7 @@
 ISSUE ?= B
 NUM_CORE ?= 2
 NUM_TL_UL ?= 0
+NUM_M_AGENT ?= 1
 NUM_SLICE ?= 4
 WITH_CHISELDB ?= 1
 WITH_TLLOG ?= 1
@@ -39,6 +40,10 @@ gen-test-top-chi:
 	mill -i CoupledL2.test.runMain coupledL2.$(TOP)_$(SYSTEM) -td $(BUILD_DIR) $(CHI_TOP_ARGS) --target systemverilog --split-verilog
 	$(MEM_GEN_SEP) "$(MEM_GEN)" "$(TOP_V).conf" "$(BUILD_DIR)"
 
+gen-test-top-matrix:
+	mill -i CoupledL2.test.runMain coupledL2.$(TOP) -td $(BUILD_DIR) --target systemverilog --split-verilog
+	$(MEM_GEN_SEP) "$(MEM_GEN)" "$(BUILD_DIR)/TestTop.sv.conf" "$(BUILD_DIR)"
+
 test-top-l2:
 	$(MAKE) gen-test-top SYSTEM=L2
 
@@ -53,6 +58,9 @@ test-top-l2l3l2:
 
 test-top-fullsys:
 	$(MAKE) gen-test-top SYSTEM=fullSys
+
+test-top-matrix:
+	$(MAKE) gen-test-top-matrix TOP=TestTop_Matrix
 
 test-top-chi:
 	$(MAKE) gen-test-top-chi SYSTEM=CHIL2 $(CHI_PASS_ARGS)
