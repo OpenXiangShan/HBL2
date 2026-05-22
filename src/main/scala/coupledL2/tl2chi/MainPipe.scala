@@ -161,6 +161,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   val req_acquireBlock_s3       = sinkA_req_s3 && req_s3.opcode === AcquireBlock
   val req_prefetch_s3           = sinkA_req_s3 && req_s3.opcode === Hint
   val req_get_s3                = sinkA_req_s3 && req_s3.opcode === Get
+  val req_putfull_s3            = sinkA_req_s3 && req_s3.opcode === PutFullData
   val req_cbo_clean_s3          = sinkA_req_s3 && req_s3.opcode === CBOClean
   val req_cbo_flush_s3          = sinkA_req_s3 && req_s3.opcode === CBOFlush && !cmoHitInvalid
   val req_cbo_inval_s3          = sinkA_req_s3 && req_s3.opcode === CBOInval
@@ -168,6 +169,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   val mshr_grant_s3             = mshr_req_s3 && req_s3.fromA && (req_s3.opcode === Grant || req_s3.opcode === GrantData)
   val mshr_grantdata_s3         = mshr_req_s3 && req_s3.fromA && req_s3.opcode === GrantData
   val mshr_accessackdata_s3     = mshr_req_s3 && req_s3.fromA && req_s3.opcode === AccessAckData
+  val mshr_putack_s3            = mshr_req_s3 && req_s3.fromA && req_s3.opcode === AccessAck && req_s3.usePutData
   val mshr_hintack_s3           = mshr_req_s3 && req_s3.fromA && req_s3.opcode === HintAck
   val mshr_cmoresp_s3           = mshr_req_s3 && req_s3.fromA && req_s3.opcode === CBOAck
 
@@ -237,6 +239,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   ) || cmo_cbo_s3)
   val need_probe_s3_a = dirResult_s3.hit && meta_has_clients_s3 && (
     req_get_s3 && (meta_s3.state === TRUNK) ||
+    req_putfull_s3 ||
     req_cbo_clean_s3 && (meta_s3.state === TRUNK) ||
     req_cbo_flush_s3 ||
     req_cbo_inval_s3
@@ -477,9 +480,11 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     mshr_snpRespX_s3 || mshr_snpRespDataX_s3 ||
     mshr_writeCleanFull_s3 || mshr_writeBackFull_s3 || 
     mshr_writeEvictFull_s3 || mshr_writeEvictOrEvict_s3 || mshr_evict_s3 ||
-    mshr_refill_s3 && !need_repl && !retry
+    mshr_refill_s3 && !need_repl && !retry ||
+    mshr_putack_s3
   )
-  val wen = wen_c || wen_mshr
+  val wen_put = req_putfull_s3 && dirResult_s3.hit && isT(meta_s3.state) && !need_mshr_s3_a
+  val wen = wen_c || wen_put || wen_mshr
 
   // This is to let io.toDS.req_s3.valid hold for 2 cycles (see DataStorage for details)
   val task_s3_valid_hold2 = RegInit(0.U(2.W))
@@ -502,19 +507,26 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   io.toDS.req_s3.bits.wen := wen
   io.toDS.wdata_s3.data := Mux(
     !mshr_req_s3,
-    c_releaseData_s3,
+    Mux(req_putfull_s3, req_s3.putData.data, c_releaseData_s3),
     Mux(
-      req_s3.useProbeData,
-      io.releaseBufResp_s3.bits.data,
-      io.refillBufResp_s3.bits.data
+      req_s3.usePutData,
+      req_s3.putData.data,
+      Mux(
+        req_s3.useProbeData,
+        io.releaseBufResp_s3.bits.data,
+        io.refillBufResp_s3.bits.data
+      )
     )
   )
+
+  assert(!(task_s3.valid && req_putfull_s3 && (!dirResult_s3.hit || !isT(meta_s3.state))),
+    "Matrix PutFullData only supports hit with write-capable state; TODO: support miss/permission-acquire path")
 
   /* ======== Read DS and store data in Buffer ======== */
   // A: need_write_releaseBuf indicates that DS should be read and the data will be written into ReleaseBuffer
   //    need_write_releaseBuf is assigned true when:
   //    inner clients' data is needed, but whether the client will ack data is uncertain, so DS data is also needed
-  val need_write_releaseBuf = need_probe_s3_a ||
+  val need_write_releaseBuf = need_probe_s3_a && !req_putfull_s3 ||
     cache_alias ||
     need_data_b && need_mshr_s3_b ||
     need_data_mshr_repl ||
@@ -546,9 +558,9 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     req_s3.alias.getOrElse(0.U)
   )
   val metaW_s3_a = MetaEntry(
-    dirty = meta_s3.dirty,
-    state = Mux(req_needT_s3 || sink_resp_s3_a_promoteT, TRUNK, meta_s3.state),
-    clients = Fill(clientBits, Mux(l2Error_s3, false.B, true.B)),
+    dirty = req_putfull_s3 || meta_s3.dirty,
+    state = Mux(req_putfull_s3, TIP, Mux(req_needT_s3 || sink_resp_s3_a_promoteT, TRUNK, meta_s3.state)),
+    clients = Mux(req_putfull_s3, 0.U(clientBits.W), Fill(clientBits, Mux(l2Error_s3, false.B, true.B))),
     alias = Some(metaW_s3_a_alias),
     accessed = true.B,
     tagErr = meta_s3.tagErr,
@@ -627,12 +639,12 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   val txdat_s3_latch = true
   val isD_s3 = Mux(
     mshr_req_s3,
-    mshr_cmoresp_s3 && !io.cmoAllBlock.getOrElse(false.B) || mshr_refill_s3 && !retry,
+    mshr_cmoresp_s3 && !io.cmoAllBlock.getOrElse(false.B) || mshr_refill_s3 && !retry || mshr_putack_s3,
     req_s3.fromC || req_s3.fromA && !need_mshr_s3_a && !data_unready_s3_tl && req_s3.opcode =/= Hint && !io.cmoAllBlock.getOrElse(false.B)
   )
   val isD_s3_ready = Mux(
     mshr_req_s3,
-    mshr_cmoresp_s3 && !io.cmoAllBlock.getOrElse(false.B) || mshr_refill_s3 && !retry,
+    mshr_cmoresp_s3 && !io.cmoAllBlock.getOrElse(false.B) || mshr_refill_s3 && !retry || mshr_putack_s3,
     req_s3.fromC || req_s3.fromA && !need_mshr_s3_a && !data_unready_s3_tl && req_s3.opcode =/= Hint && !d_s3_latch.B
   )
   val isTXRSP_s3 = Mux(
@@ -900,7 +912,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   require(io.status_vec_toD.size == 3)
   io.status_vec_toD(0).valid := task_s3.valid && Mux(
     mshr_req_s3,
-    mshr_refill_s3 && !retry,
+    mshr_refill_s3 && !retry || mshr_putack_s3,
     true.B
     // TODO:
     // To consider grantBuffer capacity conflict, only " req_s3.fromC || req_s3.fromA && !need_mshr_s3 " is needed

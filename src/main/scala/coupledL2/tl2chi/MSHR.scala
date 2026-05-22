@@ -164,6 +164,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
   val req_acquire = req.opcode === AcquireBlock && req.fromA || req.opcode === AcquirePerm // AcquireBlock and Probe share the same opcode
   val req_acquirePerm = req.opcode === AcquirePerm
   val req_get = req.opcode === Get
+  val req_putfull = req.fromA && req.opcode === PutFullData
   val req_prefetch = req.opcode === Hint
 
   val req_mayRepl = req_acquire || req_get || req_prefetch
@@ -733,15 +734,19 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     mp_grant.isKeyword.foreach(_ := req.isKeyword.getOrElse(false.B))
     mp_grant.opcode := odOpGen(req.opcode)
     mp_grant.param := Mux(
-      req_get || req_prefetch,
-      0.U, // Get -> AccessAckData
-      MuxLookup( // Acquire -> Grant
-        req.param,
-        req.param)(
-        Seq(
-          NtoB -> Mux(req_promoteT, toT, toB),
-          BtoT -> toT,
-          NtoT -> toT
+      req_putfull,
+      0.U,
+      Mux(
+        req_get || req_prefetch,
+        0.U, // Get -> AccessAckData
+        MuxLookup( // Acquire -> Grant
+          req.param,
+          req.param)(
+          Seq(
+            NtoB -> Mux(req_promoteT, toT, toB),
+            BtoT -> toT,
+            NtoT -> toT
+          )
         )
       )
     )
@@ -762,41 +767,51 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     // Exception case when multi-core: if aliasTask is AcquireBlock NtoT and self_state is Branch, 
     // and there is a nested Probe toN from L3 (means the data Granted from L3 in the future may be a new data),
     // useProbeData will be set false to use data in RefillBuffer
-    mp_grant.useProbeData := (dirResult.hit && req_get) || 
+    mp_grant.useProbeData := !req_putfull && ((dirResult.hit && req_get) ||
       (req.aliasTask.getOrElse(false.B) && 
         !(dirResult.meta.state === BRANCH && req_needT) 
-      )
+      ))
     mp_grant.readProbeDataDown := false.B
     mp_grant.dirty := false.B
 
     mp_grant.meta := MetaEntry(
-      dirty = gotDirty || dirResult.hit && meta.dirty,
+      dirty = req_putfull || gotDirty || dirResult.hit && meta.dirty,
       state = Mux(
-        req_get,
-        Mux( // Get
-          dirResult.hit,
-          Mux(isT(meta.state), TIP, BRANCH),
-          Mux(req_promoteT, TIP, BRANCH)
-        ),
-        Mux( // Acquire
-          req_promoteT || req_needT,
-          Mux(req_prefetch, TIP, TRUNK),
-          BRANCH
+        req_putfull,
+        TIP,
+        Mux(
+          req_get,
+          Mux( // Get
+            dirResult.hit,
+            Mux(isT(meta.state), TIP, BRANCH),
+            Mux(req_promoteT, TIP, BRANCH)
+          ),
+          Mux( // Acquire
+            req_promoteT || req_needT,
+            Mux(req_prefetch, TIP, TRUNK),
+            BRANCH
+          )
         )
       ),
       clients = Mux(
-        req_prefetch,
-        Mux(dirResult.hit, meta.clients, Fill(clientBits, false.B)),
-        Fill(clientBits, !(req_get && (!dirResult.hit || meta_no_client)))
+        req_putfull,
+        0.U(clientBits.W),
+        Mux(
+          req_prefetch,
+          Mux(dirResult.hit, meta.clients, Fill(clientBits, false.B)),
+          Fill(clientBits, !(req_get && (!dirResult.hit || meta_no_client)))
+        )
       ),
       alias = Some(aliasFinal),
       prefetch = req_prefetch || dirResult.hit && meta_pft,
       pfsrc = PfSource.fromMemReqSource(req.reqSource),
-      accessed = req_acquire || req_get
+      accessed = req_putfull || req_acquire || req_get
     )
     mp_grant.metaWen := !cmo_cbo && !denied
-    mp_grant.tagWen := !cmo_cbo && !dirResult.hit && !denied
-    mp_grant.dsWen := (gotGrantData || probeDirty && (req_get || req.aliasTask.getOrElse(false.B))) && !denied
+    mp_grant.tagWen := !cmo_cbo && !dirResult.hit && !req_putfull && !denied
+    mp_grant.dsWen := (req_putfull || gotGrantData || probeDirty && (req_get || req.aliasTask.getOrElse(false.B))) && !denied
+    mp_grant.putData := req.putData
+    mp_grant.usePutData := req_putfull
     mp_grant.fromL2pft.foreach(_ := req.fromL2pft.get)
     mp_grant.needHint.foreach(_ := false.B)
     mp_grant.replTask := !dirResult.hit && !state.w_replResp && !denied

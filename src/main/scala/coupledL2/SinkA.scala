@@ -34,9 +34,22 @@ class SinkA(implicit p: Parameters) extends L2Module {
     val task = DecoupledIO(new TaskBundle)
     val cmoAll = Option.when(cacheParams.enableL2Flush) (new IOCMOAll)
   })
-  assert(!(io.a.valid && (io.a.bits.opcode === PutFullData ||
-                          io.a.bits.opcode === PutPartialData)),
-    "no Put");
+  require(beatSize == 2)
+  val (a_first, a_last, _, a_beat) = edgeIn.count(io.a)
+  val a_putFull = io.a.bits.opcode === PutFullData
+  val a_putPartial = io.a.bits.opcode === PutPartialData
+  val a_matrixKey = io.a.bits.user.lift(MatrixKey).getOrElse(0.U)
+  val putDataFirst = RegInit(0.U((beatBytes * 8).W))
+  val putDataFirstValid = RegInit(false.B)
+
+  assert(!(io.a.valid && a_putPartial),
+    "Matrix PutPartialData is unsupported; TODO: implement partial-line Matrix Put")
+  assert(!(io.a.valid && a_putFull && io.a.bits.size =/= offsetBits.U),
+    "Matrix PutFullData only supports full-line writes; TODO: support sub-line PutFullData")
+  assert(!(io.a.valid && a_putFull && io.a.bits.mask =/= Fill(beatBytes, 1.U(1.W))),
+    "Matrix PutFullData only supports full-beat masks; TODO: support masked PutFullData")
+  assert(!(io.a.valid && a_putFull && a_matrixKey =/= "b01".U),
+    "Matrix PutFullData must carry Matrix Flag 2'b01")
 
   // flush L2 all control defines
   val set = Option.when(cacheParams.enableL2Flush)(RegInit(0.U(setBits.W))) 
@@ -48,6 +61,8 @@ class SinkA(implicit p: Parameters) extends L2Module {
   val wayVal = way.getOrElse(0.U)
   val cmoAllValid = stateVal === sCMOREQ
   val cmoAllBlock = stateVal === sCMOREQ || stateVal === sWAITLINE
+  val cmoAllTaskValid = cmoAllValid && !putDataFirstValid
+  val cmoAllBlocksA = cmoAllBlock && !putDataFirstValid
   io.cmoAll.foreach { cmoAll => cmoAll.l2FlushDone := stateVal === sDONE }
   io.cmoAll.foreach { cmoAll => cmoAll.cmoAllBlock := cmoAllBlock }
 
@@ -58,10 +73,10 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.channel := "b001".U
     task.txChannel := 0.U
     task.tag := parseAddress(a.address)._1
-    task.set := Mux(cmoAllValid, setVal, parseAddress(a.address)._2)
+    task.set := Mux(cmoAllTaskValid, setVal, parseAddress(a.address)._2)
     task.off := parseAddress(a.address)._3
     task.alias.foreach(_ := a.user.lift(AliasKey).getOrElse(0.U))
-    task.opcode := Mux(cmoAllValid, CBOFlush, a.opcode)
+    task.opcode := Mux(cmoAllTaskValid, CBOFlush, a.opcode)
     task.param := a.param
     task.size := a.size
     task.sourceId := a.source
@@ -76,7 +91,9 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.fromL2pft.foreach(_ := false.B)
     task.needHint.foreach(_ := a.user.lift(PrefetchKey).getOrElse(false.B))
     task.dirty := false.B
-    task.way := Mux(cmoAllValid, wayVal, 0.U(wayBits.W))
+    task.putData := 0.U.asTypeOf(new DSBlock)
+    task.usePutData := false.B
+    task.way := Mux(cmoAllTaskValid, wayVal, 0.U(wayBits.W))
     task.meta := 0.U.asTypeOf(new MetaEntry)
     task.metaWen := false.B
     task.tagWen := false.B
@@ -93,7 +110,7 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.isKeyword.foreach(_ := a.echo.lift(IsKeywordKey).getOrElse(false.B))
     task.mergeA := false.B
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
-    task.cmoAll := cmoAllValid
+    task.cmoAll := cmoAllTaskValid
     task
   }
   def fromPrefetchReqtoTaskBundle(req: PrefetchReq): TaskBundle = {
@@ -120,6 +137,8 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.mshrRetry := false.B
     task.needHint.foreach(_ := false.B)
     task.dirty := false.B
+    task.putData := 0.U.asTypeOf(new DSBlock)
+    task.usePutData := false.B
     task.way := 0.U(wayBits.W)
     task.meta := 0.U.asTypeOf(new MetaEntry)
     task.metaWen := false.B
@@ -139,18 +158,35 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task
   }
   if (prefetchOpt.nonEmpty) {
-    io.task.valid := io.a.valid && !cmoAllBlock || io.prefetchReq.get.valid || cmoAllValid
+    val aTask = fromTLAtoTaskBundle(io.a.bits)
+    aTask.putData.data := Cat(io.a.bits.data, putDataFirst)
+    aTask.usePutData := a_putFull
+    val aTaskValid = io.a.valid && !cmoAllBlocksA && (!a_putFull || a_last)
+    val prefetchCanIssue = !io.a.valid && !putDataFirstValid && !cmoAllTaskValid
+    val prefetchTaskValid = io.prefetchReq.get.valid && prefetchCanIssue
+    io.task.valid := aTaskValid || prefetchTaskValid || cmoAllTaskValid
     io.task.bits := Mux(
-      io.a.valid || cmoAllValid,
-      fromTLAtoTaskBundle(io.a.bits),
+      aTaskValid || cmoAllTaskValid,
+      aTask,
       fromPrefetchReqtoTaskBundle(io.prefetchReq.get.bits
     ))
-    io.a.ready := io.task.ready && !cmoAllBlock
-    io.prefetchReq.get.ready := io.task.ready && !io.a.valid
+    io.a.ready := !cmoAllBlocksA && Mux(a_putFull, Mux(a_last, io.task.ready, true.B), io.task.ready)
+    io.prefetchReq.get.ready := io.task.ready && prefetchCanIssue
   } else {
-    io.task.valid := io.a.valid && !cmoAllBlock || cmoAllValid
-    io.task.bits := fromTLAtoTaskBundle(io.a.bits) 
-    io.a.ready := io.task.ready && !cmoAllBlock
+    val aTask = fromTLAtoTaskBundle(io.a.bits)
+    aTask.putData.data := Cat(io.a.bits.data, putDataFirst)
+    aTask.usePutData := a_putFull
+    io.task.valid := io.a.valid && !cmoAllBlocksA && (!a_putFull || a_last) || cmoAllTaskValid
+    io.task.bits := aTask
+    io.a.ready := !cmoAllBlocksA && Mux(a_putFull, Mux(a_last, io.task.ready, true.B), io.task.ready)
+  }
+
+  when (io.a.fire && a_putFull && a_first && !a_last) {
+    putDataFirst := io.a.bits.data
+    putDataFirstValid := true.B
+  }
+  when (io.a.fire && a_putFull && a_last) {
+    putDataFirstValid := false.B
   }
 
   /*
@@ -174,7 +210,7 @@ class SinkA(implicit p: Parameters) extends L2Module {
   when (stateVal === sIDLE && l2Flush && !mshrValid) {
     state.foreach { _ := sCMOREQ }
   }
-  when (stateVal === sCMOREQ && io.task.fire) {
+  when (stateVal === sCMOREQ && io.task.fire && cmoAllTaskValid) {
     state.foreach { _ := sWAITLINE }
   }
   when (stateVal === sWAITLINE && cmoLineDone) {

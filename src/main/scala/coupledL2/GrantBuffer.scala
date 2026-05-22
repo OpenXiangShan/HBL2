@@ -194,13 +194,17 @@ class GrantBuffer(implicit p: Parameters) extends L2Module {
     val grantid = UInt(mshrBits.W)
   }))
 
-  // Default normal path (without matrix routing)
-  grantQueue.io.deq.ready := io.d.ready && !grantBufValid
+  val deqToMatrix = deqTask.matrixTask.getOrElse(false.B) && deqTask.opcode === AccessAckData
+  val routeMatrix = !grantBufValid && deqToMatrix
+
+  // Default normal path (without matrix routing). A buffered D beat has priority over
+  // dequeueing a new Matrix response from the grant queue.
+  grantQueue.io.deq.ready := io.d.ready && !grantBufValid && !deqToMatrix
   grantQueueData0.io.deq.ready := grantQueue.io.deq.ready
   grantQueueData1.io.deq.ready := grantQueue.io.deq.ready
 
   // if deqTask has data, send the first beat directly and save the remaining beat in grantBuf
-  when(deqValid && io.d.ready && !grantBufValid && deqTask.opcode(0)) {
+  when(deqValid && io.d.ready && !grantBufValid && deqTask.opcode(0) && !deqToMatrix) {
     grantBufValid := true.B
     grantBuf.task := deqTask
     grantBuf.task.isKeyword.foreach(_ := deqTask.isKeyword.getOrElse(false.B))
@@ -211,7 +215,7 @@ class GrantBuffer(implicit p: Parameters) extends L2Module {
     grantBufValid := false.B
   }
 
-  io.d.valid := grantBufValid || deqValid
+  io.d.valid := grantBufValid || (deqValid && !deqToMatrix)
   io.d.bits := Mux(
     grantBufValid,
     toTLBundleD(grantBuf.task, grantBuf.data.data, grantBuf.grantid),
@@ -220,22 +224,16 @@ class GrantBuffer(implicit p: Parameters) extends L2Module {
 
   // Matrix response path (conditional)
   if (enableMatrix) {
-    val toMatrix = deqTask.matrixTask.getOrElse(false.B) && deqTask.opcode === AccessAckData
-    when (toMatrix) {
-      grantQueue.io.deq.ready := io.matrixDataOut.get.ready
-      grantQueueData0.io.deq.ready := io.matrixDataOut.get.ready
-      grantQueueData1.io.deq.ready := io.matrixDataOut.get.ready
-
-      io.d.valid := false.B
-      io.d.bits := DontCare
-      io.matrixDataOut.get.valid := deqValid
-      io.matrixDataOut.get.bits.sourceId := deqTask.ameIndex.getOrElse(0.U)
-      io.matrixDataOut.get.bits.channel := deqTask.ameChannel.getOrElse(0.U)
-      io.matrixDataOut.get.bits.data := deqData.asTypeOf(new DSBlock)
-    }.otherwise {
-      io.matrixDataOut.get.valid := false.B
-      io.matrixDataOut.get.bits := DontCare
+    when (deqToMatrix) {
+      grantQueue.io.deq.ready := io.matrixDataOut.get.ready && !grantBufValid
+      grantQueueData0.io.deq.ready := grantQueue.io.deq.ready
+      grantQueueData1.io.deq.ready := grantQueue.io.deq.ready
     }
+
+    io.matrixDataOut.get.valid := deqValid && routeMatrix
+    io.matrixDataOut.get.bits.sourceId := deqTask.ameIndex.getOrElse(0.U)
+    io.matrixDataOut.get.bits.channel := deqTask.ameChannel.getOrElse(0.U)
+    io.matrixDataOut.get.bits.data := deqData.asTypeOf(new DSBlock)
   }
 
 

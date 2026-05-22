@@ -114,6 +114,10 @@ class TaskBundle(implicit p: Parameters) extends L2Bundle
   // For DirtyKey in Release
   val dirty = Bool()
 
+  // Matrix PutFullData hit support. Only full-line Put data is carried here.
+  val putData = new DSBlock()
+  val usePutData = Bool()
+
   // if this is an mshr task and it needs to write dir
   val way = UInt(wayBits.W)
   val meta = new MetaEntry()
