@@ -169,7 +169,12 @@ class GrantBuffer(implicit p: Parameters) extends L2Module {
   grantQueue.io.enq.bits.task.isKeyword.foreach(_ := grantQueue_enq_isKeyword)
   //grantQueue.io.enq.bits.task.isKeyword.foreach(_ := io.d_task.bits.task.isKeyword.getOrElse(false.B))
   grantQueue.io.enq.bits.grantid := inflight_insertIdx
-  val enqData = io.d_task.bits.data.asTypeOf(Vec(beatSize, new DSBeat))
+  val enqData = Wire(Vec(beatSize, new DSBeat))
+  for (i <- 0 until beatSize) {
+    val hi = (i + 1) * (beatBytes * 8) - 1
+    val lo = i * (beatBytes * 8)
+    enqData(i).data := io.d_task.bits.data.data(hi, lo)
+  }
   grantQueueData0.io.enq.valid := grantQueue.io.enq.valid
   grantQueueData0.io.enq.bits.data := enqData(0)
   grantQueueData1.io.enq.valid := grantQueue.io.enq.valid

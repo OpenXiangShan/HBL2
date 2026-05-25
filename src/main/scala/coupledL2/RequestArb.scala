@@ -92,10 +92,12 @@ class RequestArb(implicit p: Parameters) extends L2Module
   val s2_ready  = Wire(Bool())
   val mshr_task_s1 = RegInit(0.U.asTypeOf(Valid(new TaskBundle())))
 
+  val s1_put_install = mshr_task_s1.bits.opcode === AccessAck && mshr_task_s1.bits.usePutData
   val s1_needs_replRead = mshr_task_s1.valid && mshr_task_s1.bits.fromA && mshr_task_s1.bits.replTask && (
     mshr_task_s1.bits.opcode === Grant ||
     mshr_task_s1.bits.opcode === GrantData ||
     mshr_task_s1.bits.opcode === AccessAckData ||
+    s1_put_install ||
     mshr_task_s1.bits.opcode === HintAck
   )
 
@@ -104,6 +106,9 @@ class RequestArb(implicit p: Parameters) extends L2Module
 
   assert(!s1_needs_replRead || mshr_task_s1.bits.opcode =/= AccessAckData || mshr_task_s1.bits.dsWen,
     "replTask of AccessAckData with no DataStorage write was not expected")
+
+  assert(!s1_needs_replRead || mshr_task_s1.bits.opcode =/= AccessAck || !mshr_task_s1.bits.usePutData || mshr_task_s1.bits.dsWen,
+    "replTask of AccessAck Put install with no DataStorage write was not expected")
   
   assert(!s1_needs_replRead || mshr_task_s1.bits.opcode =/= HintAck || mshr_task_s1.bits.dsWen,
     "replTask of HintAck with no DataStorage write was not expected")
@@ -223,8 +228,9 @@ class RequestArb(implicit p: Parameters) extends L2Module
       task_s2.bits.opcode === AccessAckData || task_s2.bits.opcode === HintAck && task_s2.bits.dsWen)
   // For GrantData, read refillBuffer
   // Caution: GrantData-alias may read DataStorage or ReleaseBuf instead
-  // Release-replTask also read refillBuf and then write to DS
-  val releaseRefillData = task_s2.bits.replTask && (if (enableCHI) {
+  // Release-replTask normally reads refillBuf and writes that data into DS.
+  // Replacement-safe PutFullData install carries its final DS data in-task instead.
+  val releaseRefillData = task_s2.bits.replTask && !task_s2.bits.usePutData && (if (enableCHI) {
     task_s2.bits.toTXREQ && (
       task_s2.bits.chiOpcode.get === WriteBackFull ||
       task_s2.bits.chiOpcode.get === WriteEvictFull ||

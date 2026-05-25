@@ -131,14 +131,19 @@ class MSHR(implicit p: Parameters) extends L2Module {
     oa.set := req.set
     oa.off := req.off
     oa.source := io.id
+    // TODO: evaluate whether TL true-miss PutFullData can later use a permission-only path.
     oa.opcode := Mux(
-      req_acquirePerm && dirResult.hit,
-      req.opcode,
-      // Get or AcquireBlock
-      AcquireBlock
+      req_putfull,
+      Mux(dirResult.hit, AcquirePerm, AcquireBlock),
+      Mux(
+        req_acquirePerm && dirResult.hit,
+        req.opcode,
+        // Get or AcquireBlock
+        AcquireBlock
+      )
     )
     oa.param := Mux(
-      req_needT,
+      req_putfull || req_needT,
       Mux(dirResult.hit, BtoT, NtoT),
       NtoB
     )
@@ -154,12 +159,16 @@ class MSHR(implicit p: Parameters) extends L2Module {
     ob.off := 0.U
     ob.opcode := Probe
     ob.param := Mux(
-      !state.s_pprobe,
-      req.param,
+      req_putfull,
+      toN,
       Mux(
-        req_get && dirResult.hit && meta.state === TRUNK && !req_putfull,
-        toB,
-        toN
+        !state.s_pprobe,
+        req.param,
+        Mux(
+          req_get && dirResult.hit && meta.state === TRUNK,
+          toB,
+          toN
+        )
       )
     )
     ob.alias.foreach(_ := meta.alias.getOrElse(0.U))
@@ -195,9 +204,11 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_release.mshrTask := true.B
     mp_release.mshrId := io.id
     mp_release.aliasTask.foreach(_ := false.B)
-    // mp_release definitely read releaseBuf and refillBuf at ReqArb
-    // and it needs to write refillData to DS, so useProbeData is set false according to DS.wdata logic
+    // mp_release reads releaseBuf for outgoing ReleaseData when needed.
+    // Its final DS write comes either from refillBuf (normal refill install) or req.putData (PutFullData install).
     mp_release.useProbeData := false.B
+    mp_release.putData := req.putData
+    mp_release.usePutData := req_putfull
     mp_release.readProbeDataDown := mp_release.opcode === ReleaseData
     mp_release.mshrRetry := false.B
     mp_release.way := dirResult.way
@@ -207,7 +218,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_release.metaWen := false.B
     mp_release.meta := MetaEntry()
     mp_release.tagWen := false.B
-    mp_release.dsWen := true.B // write refillData to DS
+    mp_release.dsWen := true.B // write refillData or PutData to DS at the replacement-safe point
     mp_release.replTask := true.B
     mp_release.wayMask := 0.U(cacheParams.ways.W)
     mp_release.reqSource := 0.U(MemReqSource.reqSourceBits.W)
@@ -373,7 +384,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
       accessed = req_putfull || req_acquire || req_get
     )
     mp_grant.metaWen := true.B
-    mp_grant.tagWen := !dirResult.hit && !req_putfull
+    mp_grant.tagWen := !dirResult.hit
     mp_grant.dsWen := req_putfull || gotGrantData || probeDirty && (req_get || req.aliasTask.getOrElse(false.B))
     mp_grant.putData := req.putData
     mp_grant.usePutData := req_putfull
