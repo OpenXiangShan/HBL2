@@ -34,6 +34,7 @@ class SinkMX(implicit p: Parameters) extends L2Module {
   io.c.ready := false.B
 
   val matrix_key = io.a.bits.user.lift(MatrixKey).getOrElse(0.U)
+  val ameIndex = io.a.bits.user.lift(AmeIndexKey).getOrElse(0.U)
   val isMatrix = MatrixInfo.isMatrix(matrix_key)
   val isRMW = MatrixInfo.isRMW(matrix_key)
 
@@ -80,6 +81,7 @@ class SinkMX(implicit p: Parameters) extends L2Module {
   matrixPutC.source := a.source
   matrixPutC.corrupt := a.corrupt
   matrixPutC.user.lift(MatrixKey).foreach(_ := matrix_key)
+  matrixPutC.user.lift(AmeIndexKey).foreach(_ := ameIndex)
 
   io.out_c.valid := outCMatrixValid || outCNativeValid
   io.out_c.bits := Mux(selectMatrixPut, matrixPutC, io.c.bits)

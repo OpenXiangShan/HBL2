@@ -493,6 +493,8 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     mp_release.cmoTask := cmo_cbo
     mp_release.wayMask := 0.U(cacheParams.ways.W)
     mp_release.reqSource := 0.U(MemReqSource.reqSourceBits.W)
+    mp_release.ameChannel := req.ameChannel
+    mp_release.ameIndex := req.ameIndex
     mp_release.mergeA := false.B
     mp_release.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
 
@@ -593,6 +595,8 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     mp_cbwrdata.cmoTask := cmo_cbo
     mp_cbwrdata.wayMask := 0.U
     mp_cbwrdata.reqSource := 0.U
+    mp_cbwrdata.ameChannel := req.ameChannel
+    mp_cbwrdata.ameIndex := req.ameIndex
     mp_cbwrdata.mergeA := false.B
     mp_cbwrdata.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
 
@@ -679,6 +683,8 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     mp_probeack.reqSource := 0.U(MemReqSource.reqSourceBits.W)
     mp_probeack.replTask := false.B
     mp_probeack.cmoTask := cmo_cbo
+    mp_probeack.ameChannel := req.ameChannel
+    mp_probeack.ameIndex := req.ameIndex
     mp_probeack.mergeA := false.B
     mp_probeack.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
 
@@ -804,6 +810,8 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     mp_grant.wayMask := 0.U(cacheParams.ways.W)
     mp_grant.mshrRetry := !state.s_retry
     mp_grant.reqSource := 0.U(MemReqSource.reqSourceBits.W)
+    mp_grant.ameChannel := req.ameChannel
+    mp_grant.ameIndex := req.ameIndex
 
     // Add merge grant task for Acquire and late Prefetch
     mp_grant.mergeA := mergeA || io.aMergeTask.valid
@@ -875,6 +883,8 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     mp_dct.reqSource := 0.U(MemReqSource.reqSourceBits.W)
     mp_dct.replTask := false.B
     mp_dct.cmoTask := cmo_cbo
+    mp_dct.ameChannel := req.ameChannel
+    mp_dct.ameIndex := req.ameIndex
     mp_dct.mergeA := false.B
     mp_dct.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
 
@@ -942,6 +952,8 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     mp_cmometaw.reqSource := 0.U(MemReqSource.reqSourceBits.W)
     mp_cmometaw.replTask := false.B
     mp_cmometaw.cmoTask := cmo_cbo
+    mp_cmometaw.ameChannel := req.ameChannel
+    mp_cmometaw.ameIndex := req.ameIndex
     mp_cmometaw.mergeA := false.B
     mp_cmometaw.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
 

@@ -74,7 +74,7 @@ case object AmeChannelKey extends ControlKey[UInt](name = "AmeChannel")
 case class AmeChannelField() extends BundleField[UInt](AmeChannelKey, Output(UInt(4.W)), _ := 0.U(4.W))
 
 case object AmeIndexKey extends ControlKey[UInt](name = "AmeIndex")
-case class AmeIndexField() extends BundleField[UInt](AmeIndexKey, Output(UInt(7.W)), _ := 0.U(7.W))
+case class AmeIndexField() extends BundleField[UInt](AmeIndexKey, Output(UInt(64.W)), _ := 0.U(64.W))
 
 case class L2Param(
   name: String = "L2",
@@ -100,7 +100,7 @@ case class L2Param(
   respKey: Seq[BundleKeyBase] = Seq(IsHitKey),
   // Manager
   reqKey: Seq[BundleKeyBase] = Seq(AliasKey, VaddrKey, PrefetchKey, ReqSourceKey, MatrixKey, AmeChannelKey, AmeIndexKey),
-  respField: Seq[BundleFieldBase] = Nil,
+  respField: Seq[BundleFieldBase] = Seq(AmeIndexField()),  // 回传 AmeIndex 到 response user 字段
 
   innerBuf: TLBufferParams = TLBufferParams(),
   outerBuf: TLBufferParams = TLBufferParams(

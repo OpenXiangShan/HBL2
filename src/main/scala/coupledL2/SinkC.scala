@@ -103,6 +103,8 @@ class SinkC(implicit p: Parameters) extends L2Module {
     task.replTask := false.B
     task.matrixTask := isMatrix
     task.modify := false.B
+    task.ameChannel := c.user.lift(AmeChannelKey).getOrElse("b1000".U)
+    task.ameIndex := c.user.lift(AmeIndexKey).getOrElse(0.U)
     task.mergeA := false.B
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
     task
