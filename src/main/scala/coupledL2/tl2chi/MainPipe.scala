@@ -39,6 +39,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     /* handle set conflict in req arb */
     val fromReqArb = Input(new Bundle() {
       val status_s1 = new PipeEntranceStatus
+      val steer_s2  = new SteerS2ToS3
     })
     /* block B and C at Entrance */
     val toReqArb = Output(new BlockInfo())

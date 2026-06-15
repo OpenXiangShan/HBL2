@@ -114,6 +114,7 @@ class Slice()(implicit p: Parameters) extends BaseSlice[OuterBundle]
   mainPipe.io.taskFromArb_s2 := reqArb.io.taskToPipe_s2
   mainPipe.io.taskInfo_s1 := reqArb.io.taskInfo_s1
   mainPipe.io.fromReqArb.status_s1 := reqArb.io.status_s1
+  mainPipe.io.fromReqArb.steer_s2  := reqArb.io.steerToPipe_s2
   mainPipe.io.bufResp := sinkC.io.bufResp
   mainPipe.io.dirResp_s3 := directory.io.resp.bits
   mainPipe.io.replResp := directory.io.replResp

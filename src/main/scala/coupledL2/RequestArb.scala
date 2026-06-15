@@ -26,8 +26,38 @@ import org.chipsalliance.cde.config.Parameters
 import coupledL2.tl2tl._
 import coupledL2.tl2chi._
 
+/*
+ * SteerS2ToS3 carries local pipeline steering metadata from RequestArb s2 to MainPipe s3.
+ * Each bit records that s2 has issued a non-blocking read to one task data source.
+ * Those sources return data in the next cycle, so s3 can identify which returned data
+ * is meaningful without re-deriving the same intent from opcode, channel, and task attributes.
+ *
+ * Keep this bundle limited to semantic facts already resolved in s2 and consumed in s3.
+ * It improves readability and timing by avoiding duplicated decode logic in s3, but it
+ * must not become a replacement for the full read-issue or DS write-enable conditions.
+ *
+ * Task data sources include:
+ * - RefillBuffer
+ * - ReleaseBuffer
+ * - PutBuffer  in SinkA
+ * - DataBuffer in SinkC (TODO)
+ */
+class SteerS2ToS3 extends Bundle {
+  val refillBufRead  = Bool() // RefillBuffer     read in s2
+  val releaseBufRead = Bool() // ReleaseBuffer    read in s2
+  val putBufRead     = Bool() // SinkA PutBuffer  read in s2
+  val sinkCDataRead  = Bool() // SinkC dataBuffer read in s2
+
+  def assertOH: Unit = {
+    val issuedVec = Seq(refillBufRead, releaseBufRead, putBufRead, sinkCDataRead)
+    assert(PopCount(VecInit(issuedVec)) <= 1.U, "Multiple data source read req issued in the same cycle!")
+  }
+}
+
 class RequestArb(implicit p: Parameters) extends L2Module
   with HasCHIOpcodes {
+
+  require(beatSize == 2)
 
   val io = IO(new Bundle() {
     /* receive incoming tasks */
@@ -49,10 +79,14 @@ class RequestArb(implicit p: Parameters) extends L2Module
     val taskToPipe_s2 = ValidIO(new TaskBundle())
     /* send s1 task info to mainpipe to help hint */
     val taskInfo_s1 = ValidIO(new TaskBundle())
+    /* send s2 steer signals to mainpipe s3 */
+    val steerToPipe_s2 = Output(new SteerS2ToS3)
 
     /* send mshrBuf read request */
     val refillBufRead_s2 = ValidIO(new MSHRBufRead)
     val releaseBufRead_s2 = ValidIO(new MSHRBufRead)
+    /* send channel task dataBuf read request */
+    val putBufRead_s2 = ValidIO(Bool()) // Read SinkA PutBuffer TODO: Not Bool()
 
     /* status of each pipeline stage */
     val status_s1 = Output(new PipeEntranceStatus) // set & tag of entrance status
@@ -92,6 +126,7 @@ class RequestArb(implicit p: Parameters) extends L2Module
   val s2_ready  = Wire(Bool())
   val mshr_task_s1 = RegInit(0.U.asTypeOf(Valid(new TaskBundle())))
 
+  // Jiang: 此处 s1_put_install 是不需要的
   val s1_put_install = mshr_task_s1.bits.opcode === AccessAck && mshr_task_s1.bits.usePutData
   val s1_needs_replRead = mshr_task_s1.valid && mshr_task_s1.bits.fromA && mshr_task_s1.bits.replTask && (
     mshr_task_s1.bits.opcode === Grant ||
@@ -279,7 +314,21 @@ class RequestArb(implicit p: Parameters) extends L2Module
     task_s2.bits.mshrId
   )
 
-  require(beatSize == 2)
+  /* putBuffer read request generation */
+  // **Always** read PutBuffer for PutFullData tasks because their payload is guaranteed to be consumed in s3:
+  // it is either written directly to DS or moved into RefillBuffer for later MSHR handling.
+  // After s3, PutBuffer no longer owns the payload.
+  io.putBufRead_s2.valid := task_s2.valid && task_s2.bits.opcode === PutFullData
+  // TODO: io.putBufRead_s2.valid.bits assignments.
+
+  /* s2 steer signals to s3 */
+  private val steer_s2 = RegInit(0.U.asTypeOf(io.steerToPipe_s2))
+  steer_s2.refillBufRead  := io.refillBufRead_s2 .valid
+  steer_s2.releaseBufRead := io.releaseBufRead_s2.valid
+  steer_s2.putBufRead     := io.putBufRead_s2    .valid
+  steer_s2.sinkCDataRead  := false.B // TODO: currently always false
+
+  io.steerToPipe_s2 := steer_s2
 
   /* status of each pipeline stage */
   io.status_s1.sets := VecInit(Seq(C_task.set, B_task.set, io.ASet, mshr_task_s1.bits.set))
