@@ -137,7 +137,8 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   val d_s3, d_s4, d_s5 = Wire(io.toSourceD.cloneType)
 
   /* ======== Stage 2 ======== */
-  val task_s2 = io.taskFromArb_s2
+  val task_s2  = io.taskFromArb_s2
+  val steer_s2 = io.fromReqArb.steer_s2
 
   /* ======== Stage 3 ======== */
   val task_s3 = RegInit(0.U.asTypeOf(Valid(new TaskBundle)))
@@ -476,16 +477,29 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   val need_data_cmo = cmo_cbo_s3 && nestable_dirResult_s3.hit && nestable_meta_s3.dirty
   val ren = need_data_a || need_data_b || need_data_mshr_repl || need_data_cmo
 
+  // Write ReleaseData from upstream c-channel into DS.
+  // Because of the inclusive property of the cache, when Release comes, the cache line must be in the cache and the directory must hit, 
+  // so it is safe to directly write ReleaseData into DS without MSHR.
   val wen_c = sinkC_req_s3 && isParamFromT(req_s3.param) && req_s3.opcode(0) && dirResult_s3.hit
-  val wen_mshr = req_s3.dsWen && (
-    mshr_snpRespX_s3 || mshr_snpRespDataX_s3 ||
-    mshr_writeCleanFull_s3 || mshr_writeBackFull_s3 || 
-    mshr_writeEvictFull_s3 || mshr_writeEvictOrEvict_s3 || mshr_evict_s3 ||
-    mshr_refill_s3 && !need_repl && !retry ||
-    mshr_putack_s3
-  )
-  val wen_put = req_putfull_s3 && dirResult_s3.hit && isT(meta_s3.state) && !need_mshr_s3_a
-  val wen = wen_c || wen_put || wen_mshr
+
+  // // 
+  // val wen_mshr = req_s3.dsWen && (
+  //   mshr_snpRespX_s3 || mshr_snpRespDataX_s3 ||
+  //   mshr_writeCleanFull_s3 || mshr_writeBackFull_s3 || 
+  //   mshr_writeEvictFull_s3 || mshr_writeEvictOrEvict_s3 || mshr_evict_s3 ||
+  //   mshr_refill_s3 && !need_repl && !retry ||
+  //   mshr_putack_s3
+  // )
+  // val wen_put = req_putfull_s3 && dirResult_s3.hit && isT(meta_s3.state) && !need_mshr_s3_a
+
+  // TODO: Can we replace 'isT(meta_s3.state) && !meta_has_clients_s3' with isTip(meta_s3.state)?
+  // For Put, only allow write data from PutBuffer into DS when hit with writeable state and no client.
+  // Otherwise, we will allocate a MSHR for Put and write data goes to RefillBuffer.
+  val wen_src_putBuf = steer_s2.putBufRead && dirResult_s3.hit && isT(meta_s3.state) && !meta_has_clients_s3
+
+  val wen_src_refillBuf  = steer_s2.refillBufRead  && req_s3.dsWen && !need_repl && !retry
+  val wen_src_releaseBuf = steer_s2.releaseBufRead && req_s3.dsWen
+  val wen = wen_c || wen_src_putBuf || wen_src_refillBuf || wen_src_releaseBuf
 
   // This is to let io.toDS.req_s3.valid hold for 2 cycles (see DataStorage for details)
   val task_s3_valid_hold2 = RegInit(0.U(2.W))

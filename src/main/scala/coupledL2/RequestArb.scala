@@ -353,6 +353,10 @@ class RequestArb(implicit p: Parameters) extends L2Module
     }
   }
 
+  // Assertions
+  io.steerToPipe_s2.assertOH
+
+  // Don't Touch
   dontTouch(io)
 
   // Performance counters
