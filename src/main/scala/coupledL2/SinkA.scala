@@ -29,17 +29,21 @@ import utility.{MemReqSource, XSPerfAccumulate}
 
 class SinkA(implicit p: Parameters) extends L2Module {
   val io = IO(new Bundle() {
-    val a = Flipped(DecoupledIO(new TLBundleA(edgeIn.bundle)))
+    val a           = Flipped(DecoupledIO(new TLBundleA(edgeIn.bundle)))
     val prefetchReq = prefetchOpt.map(_ => Flipped(DecoupledIO(new PrefetchReq)))
-    val task = DecoupledIO(new TaskBundle)
-    val cmoAll = Option.when(cacheParams.enableL2Flush) (new IOCMOAll)
+    val task        = DecoupledIO(new TaskBundle)
+    
+    // Interface with PutBuffer
+    val pBufState   = Input(new PutBufState)
+    val putBufWrite = DecoupledIO(new PutBufWrite)
+
+    val cmoAll      = Option.when(cacheParams.enableL2Flush) (new IOCMOAll)
   })
   require(beatSize == 2)
   val (a_first, a_last, _, a_beat) = edgeIn.count(io.a)
   val a_putFull = io.a.bits.opcode === PutFullData
   val a_putPartial = io.a.bits.opcode === PutPartialData
   val a_matrixKey = io.a.bits.user.lift(MatrixKey).getOrElse(0.U)
-  val putDataFirst = RegInit(0.U((beatBytes * 8).W))
   val putDataFirstValid = RegInit(false.B)
 
   assert(!(io.a.valid && a_putPartial),
@@ -91,6 +95,7 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.fromL2pft.foreach(_ := false.B)
     task.needHint.foreach(_ := a.user.lift(PrefetchKey).getOrElse(false.B))
     task.dirty := false.B
+    // TODO: kept only for TL-to-TL compatibility. TL-to-CHI PutBuffer path must not use these fields.
     task.putData := 0.U.asTypeOf(new DSBlock)
     task.usePutData := false.B
     task.way := Mux(cmoAllTaskValid, wayVal, 0.U(wayBits.W))
@@ -137,6 +142,7 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.mshrRetry := false.B
     task.needHint.foreach(_ := false.B)
     task.dirty := false.B
+    // TODO: kept only for TL-to-TL compatibility. TL-to-CHI PutBuffer path must not use these fields.
     task.putData := 0.U.asTypeOf(new DSBlock)
     task.usePutData := false.B
     task.way := 0.U(wayBits.W)
@@ -159,8 +165,7 @@ class SinkA(implicit p: Parameters) extends L2Module {
   }
   if (prefetchOpt.nonEmpty) {
     val aTask = fromTLAtoTaskBundle(io.a.bits)
-    aTask.putData.data := Cat(io.a.bits.data, putDataFirst)
-    aTask.usePutData := a_putFull
+    aTask.bufIdx := Mux(a_putFull, io.pBufState.entryIdx, 0.U(bufIdxBits.W))
     val aTaskValid = io.a.valid && !cmoAllBlocksA && (!a_putFull || a_last)
     val prefetchCanIssue = !io.a.valid && !putDataFirstValid && !cmoAllTaskValid
     val prefetchTaskValid = io.prefetchReq.get.valid && prefetchCanIssue
@@ -170,19 +175,33 @@ class SinkA(implicit p: Parameters) extends L2Module {
       aTask,
       fromPrefetchReqtoTaskBundle(io.prefetchReq.get.bits
     ))
-    io.a.ready := !cmoAllBlocksA && Mux(a_putFull, Mux(a_last, io.task.ready, true.B), io.task.ready)
     io.prefetchReq.get.ready := io.task.ready && prefetchCanIssue
   } else {
     val aTask = fromTLAtoTaskBundle(io.a.bits)
-    aTask.putData.data := Cat(io.a.bits.data, putDataFirst)
-    aTask.usePutData := a_putFull
+    aTask.bufIdx := Mux(a_putFull, io.pBufState.entryIdx, 0.U(bufIdxBits.W))
     io.task.valid := io.a.valid && !cmoAllBlocksA && (!a_putFull || a_last) || cmoAllTaskValid
     io.task.bits := aTask
-    io.a.ready := !cmoAllBlocksA && Mux(a_putFull, Mux(a_last, io.task.ready, true.B), io.task.ready)
   }
 
+  io.a.ready := !cmoAllBlocksA &&
+      Mux(
+        a_putFull, 
+        Mux(
+          a_last,
+          // On last beat, the selected entry has already been allocated, 
+          // so io.putBufWrite.ready is expected to be true and task ready is the only gate.
+          io.task.ready,
+          io.putBufWrite.ready
+        ), 
+        io.task.ready
+      )
+
+  io.putBufWrite.valid     := io.a.fire && a_putFull
+  io.putBufWrite.bits.data := io.a.bits.data
+  io.putBufWrite.bits.beat := a_beat
+  io.putBufWrite.bits.last := a_last
+
   when (io.a.fire && a_putFull && a_first && !a_last) {
-    putDataFirst := io.a.bits.data
     putDataFirstValid := true.B
   }
   when (io.a.fire && a_putFull && a_last) {
