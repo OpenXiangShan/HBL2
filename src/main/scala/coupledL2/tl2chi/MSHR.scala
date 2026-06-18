@@ -134,6 +134,9 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     state     := io.alloc.bits.state
     dirResult := io.alloc.bits.dirResult
     req       := io.alloc.bits.task
+    // TL-to-TL compatibility only; TL-to-CHI PutBuffer flow must not store Put payload in TaskBundle.
+    req.putData := 0.U.asTypeOf(new DSBlock)
+    req.usePutData := false.B
     gotT        := false.B
     gotDirty    := false.B
     gotGrantData := false.B
@@ -734,19 +737,15 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     mp_grant.isKeyword.foreach(_ := req.isKeyword.getOrElse(false.B))
     mp_grant.opcode := odOpGen(req.opcode)
     mp_grant.param := Mux(
-      req_putfull,
-      0.U,
-      Mux(
-        req_get || req_prefetch,
-        0.U, // Get -> AccessAckData
-        MuxLookup( // Acquire -> Grant
-          req.param,
-          req.param)(
-          Seq(
-            NtoB -> Mux(req_promoteT, toT, toB),
-            BtoT -> toT,
-            NtoT -> toT
-          )
+      req_putfull || req_get || req_prefetch,
+      0.U, // Get, Prefetch -> AccessAckData, Put -> AccessAck
+      MuxLookup( // Acquire -> Grant
+        req.param,
+        req.param)(
+        Seq(
+          NtoB -> Mux(req_promoteT, toT, toB),
+          BtoT -> toT,
+          NtoT -> toT
         )
       )
     )
@@ -810,8 +809,9 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     mp_grant.metaWen := !cmo_cbo && !denied
     mp_grant.tagWen := !cmo_cbo && !dirResult.hit && !req_putfull && !denied
     mp_grant.dsWen := (req_putfull || gotGrantData || probeDirty && (req_get || req.aliasTask.getOrElse(false.B))) && !denied
-    mp_grant.putData := req.putData
-    mp_grant.usePutData := req_putfull
+    // TL-to-TL compatibility only; TL-to-CHI Put completion gets payload from RefillBuffer.
+    mp_grant.putData := 0.U.asTypeOf(new DSBlock)
+    mp_grant.usePutData := false.B
     mp_grant.fromL2pft.foreach(_ := req.fromL2pft.get)
     mp_grant.needHint.foreach(_ := false.B)
     mp_grant.replTask := !dirResult.hit && !state.w_replResp && !denied

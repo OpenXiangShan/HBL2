@@ -52,7 +52,8 @@ class Slice()(implicit p: Parameters) extends BaseSlice[OuterBundle]
   /* Data path and control path */
   val directory = Module(new Directory())
   val dataStorage = Module(new DataStorage())
-  val refillBuf = Module(new MSHRBuffer(wPorts = 2))
+  val putBuf = Module(new PutBuffer)
+  val refillBuf = Module(new MSHRBuffer(wPorts = 3))
   val releaseBuf = Module(new MSHRBuffer(wPorts = 3))
 
   val reqArb = Module(new RequestArb())
@@ -124,6 +125,8 @@ class Slice()(implicit p: Parameters) extends BaseSlice[OuterBundle]
   mainPipe.io.refillBufResp_s3.bits := refillBuf.io.resp.data
   mainPipe.io.releaseBufResp_s3.valid := RegNext(releaseBuf.io.r.valid, false.B)
   mainPipe.io.releaseBufResp_s3.bits := releaseBuf.io.resp.data
+  mainPipe.io.putBufResp_s3.valid := RegNext(putBuf.io.r.valid, false.B)
+  mainPipe.io.putBufResp_s3.bits := putBuf.io.resp.data
   mainPipe.io.toDS.rdata_s5 := dataStorage.io.rdata
   mainPipe.io.toDS.error_s5 := dataStorage.io.error
   // mainPipe.io.grantBufferHint := grantBuf.io.l1Hint
@@ -165,7 +168,16 @@ class Slice()(implicit p: Parameters) extends BaseSlice[OuterBundle]
 
   /* Read and write refill buffer */
   refillBuf.io.r := reqArb.io.refillBufRead_s2
-  refillBuf.io.w <> VecInit(Seq(rxdat.io.refillBufWrite, sinkC.io.refillBufWrite))
+  refillBuf.io.w <> VecInit(Seq(
+    rxdat.io.refillBufWrite,
+    sinkC.io.refillBufWrite,
+    mainPipe.io.refillBufWrite
+  ))
+
+  /* Read and write put buffer */
+  sinkA.io.pBufState := putBuf.io.state
+  putBuf.io.w        <> sinkA.io.putBufWrite
+  putBuf.io.r        := reqArb.io.putBufRead_s2
 
   io.prefetch.foreach { p =>
     p.train <> mainPipe.io.prefetchTrain.get

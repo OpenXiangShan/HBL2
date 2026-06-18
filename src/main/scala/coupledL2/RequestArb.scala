@@ -262,7 +262,7 @@ class RequestArb(implicit p: Parameters) extends L2Module
   // For GrantData, read refillBuffer
   // Caution: GrantData-alias may read DataStorage or ReleaseBuf instead
   // Release-replTask normally reads refillBuf and writes that data into DS.
-  val releaseRefillData = task_s2.bits.replTask && !task_s2.bits.usePutData && (if (enableCHI) {
+  val releaseRefillData = task_s2.bits.replTask && (if (enableCHI) {
     task_s2.bits.toTXREQ && (
       task_s2.bits.chiOpcode.get === WriteBackFull ||
       task_s2.bits.chiOpcode.get === WriteEvictFull ||
