@@ -86,7 +86,7 @@ class RequestArb(implicit p: Parameters) extends L2Module
     val refillBufRead_s2 = ValidIO(new MSHRBufRead)
     val releaseBufRead_s2 = ValidIO(new MSHRBufRead)
     /* send channel task dataBuf read request */
-    val putBufRead_s2 = ValidIO(Bool()) // Read SinkA PutBuffer TODO: Not Bool()
+    val putBufRead_s2 = ValidIO(new PutBufRead) // read sinkA putBuf
 
     /* status of each pipeline stage */
     val status_s1 = Output(new PipeEntranceStatus) // set & tag of entrance status
@@ -126,13 +126,11 @@ class RequestArb(implicit p: Parameters) extends L2Module
   val s2_ready  = Wire(Bool())
   val mshr_task_s1 = RegInit(0.U.asTypeOf(Valid(new TaskBundle())))
 
-  // Jiang: 此处 s1_put_install 是不需要的
-  val s1_put_install = mshr_task_s1.bits.opcode === AccessAck && mshr_task_s1.bits.usePutData
   val s1_needs_replRead = mshr_task_s1.valid && mshr_task_s1.bits.fromA && mshr_task_s1.bits.replTask && (
-    mshr_task_s1.bits.opcode === Grant ||
-    mshr_task_s1.bits.opcode === GrantData ||
+    mshr_task_s1.bits.opcode === Grant         ||
+    mshr_task_s1.bits.opcode === GrantData     ||
     mshr_task_s1.bits.opcode === AccessAckData ||
-    s1_put_install ||
+    mshr_task_s1.bits.opcode === AccessAck     || // For MSHR Task caused by Put.
     mshr_task_s1.bits.opcode === HintAck
   )
 
@@ -142,9 +140,6 @@ class RequestArb(implicit p: Parameters) extends L2Module
   assert(!s1_needs_replRead || mshr_task_s1.bits.opcode =/= AccessAckData || mshr_task_s1.bits.dsWen,
     "replTask of AccessAckData with no DataStorage write was not expected")
 
-  assert(!s1_needs_replRead || mshr_task_s1.bits.opcode =/= AccessAck || !mshr_task_s1.bits.usePutData || mshr_task_s1.bits.dsWen,
-    "replTask of AccessAck Put install with no DataStorage write was not expected")
-  
   assert(!s1_needs_replRead || mshr_task_s1.bits.opcode =/= HintAck || mshr_task_s1.bits.dsWen,
     "replTask of HintAck with no DataStorage write was not expected")
 
@@ -259,12 +254,14 @@ class RequestArb(implicit p: Parameters) extends L2Module
   // MSHR task
   val mshrTask_s2 = task_s2.valid && task_s2.bits.mshrTask
   val mshrTask_s2_a_upwards = task_s2.bits.fromA &&
-    (task_s2.bits.opcode === GrantData || task_s2.bits.opcode === Grant && task_s2.bits.dsWen ||
-      task_s2.bits.opcode === AccessAckData || task_s2.bits.opcode === HintAck && task_s2.bits.dsWen)
+    ( task_s2.bits.opcode === GrantData     || 
+      task_s2.bits.opcode === Grant         && task_s2.bits.dsWen ||
+      task_s2.bits.opcode === AccessAck     || // for mshr grant task caused by put
+      task_s2.bits.opcode === AccessAckData || 
+      task_s2.bits.opcode === HintAck       && task_s2.bits.dsWen)
   // For GrantData, read refillBuffer
   // Caution: GrantData-alias may read DataStorage or ReleaseBuf instead
   // Release-replTask normally reads refillBuf and writes that data into DS.
-  // Replacement-safe PutFullData install carries its final DS data in-task instead.
   val releaseRefillData = task_s2.bits.replTask && !task_s2.bits.usePutData && (if (enableCHI) {
     task_s2.bits.toTXREQ && (
       task_s2.bits.chiOpcode.get === WriteBackFull ||
@@ -318,8 +315,10 @@ class RequestArb(implicit p: Parameters) extends L2Module
   // **Always** read PutBuffer for PutFullData tasks because their payload is guaranteed to be consumed in s3:
   // it is either written directly to DS or moved into RefillBuffer for later MSHR handling.
   // After s3, PutBuffer no longer owns the payload.
-  io.putBufRead_s2.valid := task_s2.valid && task_s2.bits.opcode === PutFullData
-  // TODO: io.putBufRead_s2.valid.bits assignments.
+  // PutFullData is enough to identify the original SinkA Put task: MSHR tasks get a reallocated opcode 'AccessAck' and
+  // cannot still be 'PutFullData'.
+  io.putBufRead_s2.valid   := task_s2.valid && task_s2.bits.opcode === PutFullData
+  io.putBufRead_s2.bits.id := task_s2.bits.bufIdx
 
   /* s2 steer signals to s3 */
   private val steer_s2 = RegInit(0.U.asTypeOf(io.steerToPipe_s2))
