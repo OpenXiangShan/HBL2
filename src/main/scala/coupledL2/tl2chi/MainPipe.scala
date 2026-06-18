@@ -68,9 +68,10 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     /* read C-channel Release Data and write into DS */
     val bufResp = Input(new PipeBufferResp)
 
-    /* get ReleaseBuffer and RefillBuffer read result */
-    val refillBufResp_s3 = Flipped(ValidIO(new DSBlock))
+    /* get ReleaseBuffer, RefillBuffer, and PutBuffer read result */
+    val refillBufResp_s3  = Flipped(ValidIO(new DSBlock))
     val releaseBufResp_s3 = Flipped(ValidIO(new DSBlock))
+    val putBufResp_s3     = Flipped(ValidIO(new DSBlock))
 
     /* read or write data storage */
     val toDS = new Bundle() {
@@ -95,6 +96,8 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
 
     /* read DS and write data into ReleaseBuf when the task needs to replace */
     val releaseBufWrite = ValidIO(new MSHRBufWrite())
+    /* Store Put data not consumed by DS into RefillBuffer */
+    val refillBufWrite  = ValidIO(new MSHRBufWrite())
 
     /* nested writeback */
     val nestedwb = Output(new NestedWriteback())
@@ -171,7 +174,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   val mshr_grant_s3             = mshr_req_s3 && req_s3.fromA && (req_s3.opcode === Grant || req_s3.opcode === GrantData)
   val mshr_grantdata_s3         = mshr_req_s3 && req_s3.fromA && req_s3.opcode === GrantData
   val mshr_accessackdata_s3     = mshr_req_s3 && req_s3.fromA && req_s3.opcode === AccessAckData
-  val mshr_putack_s3            = mshr_req_s3 && req_s3.fromA && req_s3.opcode === AccessAck && req_s3.usePutData
+  val mshr_putack_s3            = mshr_req_s3 && req_s3.fromA && req_s3.opcode === AccessAck
   val mshr_hintack_s3           = mshr_req_s3 && req_s3.fromA && req_s3.opcode === HintAck
   val mshr_cmoresp_s3           = mshr_req_s3 && req_s3.fromA && req_s3.opcode === CBOAck
 
@@ -232,7 +235,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   /* ======== Interact with MSHR ======== */
   // *NOTICE: A Channel requests should be blocked by RequestBuffer when MSHR nestable,
   //          'nestable_*' must not be used here.
-  val acquire_on_miss_s3 = req_acquire_s3 || req_prefetch_s3 || req_get_s3
+  val acquire_on_miss_s3 = req_acquire_s3 || req_prefetch_s3 || req_get_s3 || req_putfull_s3
   val acquire_on_hit_s3 = meta_s3.state === BRANCH && req_needT_s3 && !req_prefetch_s3
   val need_acquire_s3_a = req_s3.fromA && (Mux(
     dirResult_s3.hit,
@@ -305,7 +308,9 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     task.mshrTask := false.B
     task.aliasTask.foreach(_ := cache_alias)
     task.wayMask := 0.U(cacheParams.ways.W)
-    // TODO
+    // TL-to-TL compatibility only; TL-to-CHI PutBuffer flow must not carry Put payload in TaskBundle.
+    task.putData := 0.U.asTypeOf(new DSBlock)
+    task.usePutData := false.B
   }
 
   /* ======== Resps to SinkA/B/C Reqs ======== */
@@ -482,16 +487,6 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   // so it is safe to directly write ReleaseData into DS without MSHR.
   val wen_c = sinkC_req_s3 && isParamFromT(req_s3.param) && req_s3.opcode(0) && dirResult_s3.hit
 
-  // // 
-  // val wen_mshr = req_s3.dsWen && (
-  //   mshr_snpRespX_s3 || mshr_snpRespDataX_s3 ||
-  //   mshr_writeCleanFull_s3 || mshr_writeBackFull_s3 || 
-  //   mshr_writeEvictFull_s3 || mshr_writeEvictOrEvict_s3 || mshr_evict_s3 ||
-  //   mshr_refill_s3 && !need_repl && !retry ||
-  //   mshr_putack_s3
-  // )
-  // val wen_put = req_putfull_s3 && dirResult_s3.hit && isT(meta_s3.state) && !need_mshr_s3_a
-
   // TODO: Can we replace 'isT(meta_s3.state) && !meta_has_clients_s3' with isTip(meta_s3.state)?
   // For Put, only allow write data from PutBuffer into DS when hit with writeable state and no client.
   // Otherwise, we will allocate a MSHR for Put and write data goes to RefillBuffer.
@@ -520,22 +515,24 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   )
   io.toDS.req_s3.bits.set := Mux(mshr_req_s3, req_s3.set, dirResult_s3.set)
   io.toDS.req_s3.bits.wen := wen
-  io.toDS.wdata_s3.data := Mux(
+  io.toDS.wdata_s3.data   := Mux(
     !mshr_req_s3,
-    Mux(req_putfull_s3, req_s3.putData.data, c_releaseData_s3),
+    Mux(req_putfull_s3, io.putBufResp_s3.bits.data, c_releaseData_s3),
     Mux(
-      req_s3.usePutData,
-      req_s3.putData.data,
-      Mux(
-        req_s3.useProbeData,
-        io.releaseBufResp_s3.bits.data,
-        io.refillBufResp_s3.bits.data
-      )
+      req_s3.useProbeData,
+      io.releaseBufResp_s3.bits.data,
+      io.refillBufResp_s3.bits.data
     )
   )
 
-  assert(!(task_s3.valid && req_putfull_s3 && (!dirResult_s3.hit || !isT(meta_s3.state))),
-    "Matrix PutFullData only supports hit with write-capable state; TODO: support miss/permission-acquire path")
+  /* ======== Route Put data not consumed by DS to the RefillBuffer ======== */
+  // A valid task that read PutBuffer in s2 must consume that payload in s3: direct DS write or RefillBuffer handoff.
+  // As a result, if the put data is NOT consumed by DS (!wen_src_putBuf),
+  // then it must be written into RefillBuffer for later use.
+  io.refillBufWrite.valid         := task_s3.valid && steer_s2.putBufRead && !wen_src_putBuf
+  io.refillBufWrite.bits.id       := io.fromMSHRCtl.mshr_alloc_ptr
+  io.refillBufWrite.bits.data     := io.putBufResp_s3.bits
+  io.refillBufWrite.bits.beatMask := Fill(beatSize, true.B)
 
   /* ======== Read DS and store data in Buffer ======== */
   // A: need_write_releaseBuf indicates that DS should be read and the data will be written into ReleaseBuffer
