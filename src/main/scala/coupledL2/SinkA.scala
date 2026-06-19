@@ -196,10 +196,11 @@ class SinkA(implicit p: Parameters) extends L2Module {
         io.task.ready
       )
 
-  io.putBufWrite.valid     := io.a.fire && a_putFull
-  io.putBufWrite.bits.data := io.a.bits.data
-  io.putBufWrite.bits.beat := a_beat
-  io.putBufWrite.bits.last := a_last
+  io.putBufWrite.valid      := io.a.fire && a_putFull
+  io.putBufWrite.bits.data  := io.a.bits.data
+  io.putBufWrite.bits.beat  := a_beat
+  io.putBufWrite.bits.first := a_first
+  io.putBufWrite.bits.last  := a_last
 
   when (io.a.fire && a_putFull && a_first && !a_last) {
     putDataFirstValid := true.B
