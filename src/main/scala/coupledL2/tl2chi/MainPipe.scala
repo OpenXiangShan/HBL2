@@ -496,15 +496,15 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   val wen_src_releaseBuf = steer_s2.releaseBufRead && req_s3.dsWen
   val wen = wen_c || wen_src_putBuf || wen_src_refillBuf || wen_src_releaseBuf
 
-  // This is to let io.toDS.req_s3.valid hold for 2 cycles (see DataStorage for details)
-  val task_s3_valid_hold2 = RegInit(0.U(2.W))
-  when(task_s2.valid) {
-    task_s3_valid_hold2 := "b11".U
-  }.otherwise {
-    task_s3_valid_hold2 := task_s3_valid_hold2 >> 1.U
-  }
   val ds_en = task_s3.valid && (ren || wen)
-  val ds_valid = if (enableMCP2) task_s3_valid_hold2(0) && (ren || wen) else task_s3.valid && (ren || wen)
+  val ds_wen_s3 = task_s3.valid && wen
+
+  // Under MCP2, DataStorage requires io.toDS.req_s3.valid and its payloads to remain stable for an extra cycle after ds_en is asserted.
+  // Since normal S3 steering is deasserted once the task leaves S3, valid and wen must be explicitly held for the MCP2 hold cycle.
+  val ds_valid = if (enableMCP2) ds_en || RegNext(ds_en) else ds_en
+  // TODO: task_s3.valid can be removed if UpReleaseBuffer is impl and wen_c is replaced with steer.
+  //       Because steers imply that the task is valid.
+  val ds_wen   = if (enableMCP2) ds_wen_s3 || RegNext(ds_wen_s3) else ds_wen_s3
 
   io.toDS.en_s3 := ds_en
   io.toDS.req_s3.valid := ds_valid
@@ -514,7 +514,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     Mux(mshr_req_s3, req_s3.way, dirResult_s3.way)
   )
   io.toDS.req_s3.bits.set := Mux(mshr_req_s3, req_s3.set, dirResult_s3.set)
-  io.toDS.req_s3.bits.wen := wen
+  io.toDS.req_s3.bits.wen := ds_wen
   io.toDS.wdata_s3.data   := Mux(
     !mshr_req_s3,
     Mux(req_putfull_s3, io.putBufResp_s3.bits.data, c_releaseData_s3),
