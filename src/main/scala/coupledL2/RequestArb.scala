@@ -317,7 +317,7 @@ class RequestArb(implicit p: Parameters) extends L2Module
   // After s3, PutBuffer no longer owns the payload.
   // PutFullData is enough to identify the original SinkA Put task: MSHR tasks get a reallocated opcode 'AccessAck' and
   // cannot still be 'PutFullData'.
-  io.putBufRead_s2.valid   := task_s2.valid && task_s2.bits.opcode === PutFullData
+  io.putBufRead_s2.valid   := task_s2.valid && task_s2.bits.fromA && !task_s2.bits.mshrTask && task_s2.bits.opcode === PutFullData
   io.putBufRead_s2.bits.id := task_s2.bits.bufIdx
 
   /* s2 steer signals to s3 */
