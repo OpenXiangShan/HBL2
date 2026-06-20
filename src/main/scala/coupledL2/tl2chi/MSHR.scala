@@ -464,10 +464,15 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     mp_release.alias.foreach(_ := 0.U)
     mp_release.vaddr.foreach(_ := 0.U)
     mp_release.isKeyword.foreach(_ := false.B)
-    // if dirty, we must ReleaseData
-    // if accessed, we ReleaseData to keep the data in L3, for future access to be faster
-    // [Access] TODO: consider use a counter
-    mp_release.opcode := 0.U // use chiOpcode
+    // *NOTE*
+    // Q: Why use a constant opcode?
+    // A: We use chiOpcode for MSHR-issued release tasks in the tl2chi branch.
+    // Q: Why use Release instead of 0.U?
+    // A: After we add support for Put, an MSHR release task with opcode 0.U will be treated as an MSHR grant task in MainPipe,
+    //    where it is mistakenly decoded as AccessAck, which is NOT expected.
+    //    This is a tricky workaround. The essential fix is to disable TL opcode decoding where CHI opcode should be used instead, 
+    //    but that would introduce some additional logic.
+    mp_release.opcode := Release
     mp_release.param := Mux(isT(meta.state), TtoN, BtoN)
     mp_release.size := log2Ceil(blockBytes).U
     mp_release.sourceId := 0.U(sourceIdBits.W)
@@ -573,7 +578,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     mp_cbwrdata.alias.foreach(_ := 0.U)
     mp_cbwrdata.vaddr.foreach(_ := 0.U)
     mp_cbwrdata.isKeyword.foreach(_ := false.B)
-    mp_cbwrdata.opcode := 0.U
+    mp_cbwrdata.opcode := Release // Same reason as mp_release.opcode
     mp_cbwrdata.param := 0.U
     mp_cbwrdata.size := log2Ceil(blockBytes).U
     mp_cbwrdata.sourceId := 0.U(sourceIdBits.W)
