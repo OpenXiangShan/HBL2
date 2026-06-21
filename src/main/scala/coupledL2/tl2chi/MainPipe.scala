@@ -225,7 +225,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   val dataError_s3              = meta_s3.dataErr
   val l2Error_s3                = io.dirResp_s3.error
 
-  val mshr_refill_s3 = mshr_accessackdata_s3 || mshr_hintack_s3 || mshr_grant_s3 // needs refill to L2 DS
+  val mshr_refill_s3 = mshr_accessackdata_s3 || mshr_putack_s3 || mshr_hintack_s3 || mshr_grant_s3 // needs refill to L2 DS
   val replResp_valid_s3 = io.replResp.valid
   val replResp_valid_s4 = RegNext(io.replResp.valid, init = false.B)
   val replResp_valid_hold = replResp_valid_s3 || replResp_valid_s4

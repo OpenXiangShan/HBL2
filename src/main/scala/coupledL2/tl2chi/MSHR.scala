@@ -812,7 +812,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
       accessed = req_putfull || req_acquire || req_get
     )
     mp_grant.metaWen := !cmo_cbo && !denied
-    mp_grant.tagWen := !cmo_cbo && !dirResult.hit && !req_putfull && !denied
+    mp_grant.tagWen := !cmo_cbo && !dirResult.hit && !denied
     mp_grant.dsWen := (req_putfull || gotGrantData || probeDirty && (req_get || req.aliasTask.getOrElse(false.B))) && !denied
     // TL-to-TL compatibility only; TL-to-CHI Put completion gets payload from RefillBuffer.
     mp_grant.putData := 0.U.asTypeOf(new DSBlock)
