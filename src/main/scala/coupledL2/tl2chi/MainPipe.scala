@@ -69,9 +69,9 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     val bufResp = Input(new PipeBufferResp)
 
     /* get ReleaseBuffer, RefillBuffer, and PutBuffer read result */
-    val refillBufResp_s3  = Flipped(ValidIO(new DSBlock))
-    val releaseBufResp_s3 = Flipped(ValidIO(new DSBlock))
-    val putBufResp_s3     = Flipped(ValidIO(new DSBlock))
+    val refillBufResp_s3  = Input(new DSBlock)
+    val releaseBufResp_s3 = Input(new DSBlock)
+    val putBufResp_s3     = Input(new DSBlock)
 
     /* read or write data storage */
     val toDS = new Bundle() {
@@ -470,7 +470,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   source_req_s3.isKeyword.foreach(_ := req_s3.isKeyword.getOrElse(false.B))
 
   /* ======== Interact with DS ======== */
-  val data_s3 = Mux(io.releaseBufResp_s3.valid, io.releaseBufResp_s3.bits.data, io.refillBufResp_s3.bits.data)
+  val data_s3 = Mux(steer_s2.releaseBufRead, io.releaseBufResp_s3.data, io.refillBufResp_s3.data)
   val c_releaseData_s3 = io.bufResp.data.asUInt
   val hasData_s3_tl = source_req_s3.opcode(0) // whether to respond data to TileLink-side
   val hasData_s3_chi = source_req_s3.toTXDAT // whether to respond data to CHI-side
@@ -517,11 +517,11 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   io.toDS.req_s3.bits.wen := ds_wen
   io.toDS.wdata_s3.data   := Mux(
     !mshr_req_s3,
-    Mux(req_putfull_s3, io.putBufResp_s3.bits.data, c_releaseData_s3),
+    Mux(req_putfull_s3, io.putBufResp_s3.data, c_releaseData_s3),
     Mux(
       req_s3.useProbeData,
-      io.releaseBufResp_s3.bits.data,
-      io.refillBufResp_s3.bits.data
+      io.releaseBufResp_s3.data,
+      io.refillBufResp_s3.data
     )
   )
 
@@ -531,7 +531,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   // then it must be written into RefillBuffer for later use.
   io.refillBufWrite.valid         := task_s3.valid && steer_s2.putBufRead && !wen_src_putBuf
   io.refillBufWrite.bits.id       := io.fromMSHRCtl.mshr_alloc_ptr
-  io.refillBufWrite.bits.data     := io.putBufResp_s3.bits
+  io.refillBufWrite.bits.data     := io.putBufResp_s3
   io.refillBufWrite.bits.beatMask := Fill(beatSize, true.B)
 
   /* ======== Read DS and store data in Buffer ======== */

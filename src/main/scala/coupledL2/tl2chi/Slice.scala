@@ -121,12 +121,9 @@ class Slice()(implicit p: Parameters) extends BaseSlice[OuterBundle]
   mainPipe.io.replResp := directory.io.replResp
   mainPipe.io.fromMSHRCtl <> mshrCtl.io.toMainPipe
   mainPipe.io.bufResp := sinkC.io.bufResp
-  mainPipe.io.refillBufResp_s3.valid := RegNext(refillBuf.io.r.valid, false.B)
-  mainPipe.io.refillBufResp_s3.bits := refillBuf.io.resp.data
-  mainPipe.io.releaseBufResp_s3.valid := RegNext(releaseBuf.io.r.valid, false.B)
-  mainPipe.io.releaseBufResp_s3.bits := releaseBuf.io.resp.data
-  mainPipe.io.putBufResp_s3.valid := RegNext(putBuf.io.r.valid, false.B)
-  mainPipe.io.putBufResp_s3.bits := putBuf.io.resp.data
+  mainPipe.io.refillBufResp_s3 := refillBuf.io.resp.data
+  mainPipe.io.releaseBufResp_s3 := releaseBuf.io.resp.data
+  mainPipe.io.putBufResp_s3 := putBuf.io.resp.data
   mainPipe.io.toDS.rdata_s5 := dataStorage.io.rdata
   mainPipe.io.toDS.error_s5 := dataStorage.io.error
   // mainPipe.io.grantBufferHint := grantBuf.io.l1Hint
