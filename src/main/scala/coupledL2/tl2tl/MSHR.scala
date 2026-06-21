@@ -131,7 +131,9 @@ class MSHR(implicit p: Parameters) extends L2Module {
     oa.set := req.set
     oa.off := req.off
     oa.source := io.id
-    // TODO: evaluate whether TL true-miss PutFullData can later use a permission-only path.
+    // TL-to-TL Put hit uses AcquirePerm to request write permission.
+    // Due to a downstream L3 limitation, a true-miss Put must still use AcquireBlock and receive GrantData.
+    // RefillUnit accepts the response normally but suppresses its RefillBuffer write for a Put MSHR.
     oa.opcode := Mux(
       req_putfull,
       Mux(dirResult.hit, AcquirePerm, AcquireBlock),
@@ -204,11 +206,9 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_release.mshrTask := true.B
     mp_release.mshrId := io.id
     mp_release.aliasTask.foreach(_ := false.B)
-    // mp_release reads releaseBuf for outgoing ReleaseData when needed.
-    // Its final DS write comes either from refillBuf (normal refill install) or req.putData (PutFullData install).
+    // mp_release reads ReleaseBuffer for outgoing ReleaseData when needed.
+    // Its replacement-safe DS write always reads the final payload from RefillBuffer.
     mp_release.useProbeData := false.B
-    mp_release.putData := req.putData
-    mp_release.usePutData := req_putfull
     mp_release.readProbeDataDown := mp_release.opcode === ReleaseData
     mp_release.mshrRetry := false.B
     mp_release.way := dirResult.way
@@ -218,7 +218,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_release.metaWen := false.B
     mp_release.meta := MetaEntry()
     mp_release.tagWen := false.B
-    mp_release.dsWen := true.B // write refillData or PutData to DS at the replacement-safe point
+    mp_release.dsWen := true.B // write RefillBuffer data to DS at the replacement-safe point
     mp_release.replTask := true.B
     mp_release.wayMask := 0.U(cacheParams.ways.W)
     mp_release.reqSource := 0.U(MemReqSource.reqSourceBits.W)
@@ -386,8 +386,6 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_grant.metaWen := true.B
     mp_grant.tagWen := !dirResult.hit
     mp_grant.dsWen := req_putfull || gotGrantData || probeDirty && (req_get || req.aliasTask.getOrElse(false.B))
-    mp_grant.putData := req.putData
-    mp_grant.usePutData := req_putfull
     mp_grant.fromL2pft.foreach(_ := req.fromL2pft.get)
     mp_grant.needHint.foreach(_ := false.B)
     mp_grant.replTask := !dirResult.hit // Get and Alias are hit that does not need replacement
@@ -594,6 +592,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
   io.msInfo.bits.willFree := will_free
   io.msInfo.bits.isAcqOrPrefetch := req_acquire || req_prefetch
   io.msInfo.bits.isPrefetch := req_prefetch
+  io.msInfo.bits.isPut := req_putfull
   io.msInfo.bits.param := req.param
   io.msInfo.bits.mergeA := mergeA
   io.msInfo.bits.w_grantfirst := state.w_grantfirst

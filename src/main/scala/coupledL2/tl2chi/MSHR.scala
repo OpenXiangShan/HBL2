@@ -134,9 +134,6 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     state     := io.alloc.bits.state
     dirResult := io.alloc.bits.dirResult
     req       := io.alloc.bits.task
-    // TL-to-TL compatibility only; TL-to-CHI PutBuffer flow must not store Put payload in TaskBundle.
-    req.putData := 0.U.asTypeOf(new DSBlock)
-    req.usePutData := false.B
     gotT        := false.B
     gotDirty    := false.B
     gotGrantData := false.B
@@ -814,9 +811,6 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     mp_grant.metaWen := !cmo_cbo && !denied
     mp_grant.tagWen := !cmo_cbo && !dirResult.hit && !denied
     mp_grant.dsWen := (req_putfull || gotGrantData || probeDirty && (req_get || req.aliasTask.getOrElse(false.B))) && !denied
-    // TL-to-TL compatibility only; TL-to-CHI Put completion gets payload from RefillBuffer.
-    mp_grant.putData := 0.U.asTypeOf(new DSBlock)
-    mp_grant.usePutData := false.B
     mp_grant.fromL2pft.foreach(_ := req.fromL2pft.get)
     mp_grant.needHint.foreach(_ := false.B)
     mp_grant.replTask := !dirResult.hit && !state.w_replResp && !denied
@@ -1357,6 +1351,8 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
   io.msInfo.bits.willFree := will_free
   io.msInfo.bits.isAcqOrPrefetch := req_acquire || req_prefetch
   io.msInfo.bits.isPrefetch := req_prefetch
+  // Keep shared MSHRInfo semantics aligned; isPut is currently consumed only by the TL-to-TL RefillUnit.
+  io.msInfo.bits.isPut := req_putfull
   io.msInfo.bits.param := req.param
   io.msInfo.bits.mergeA := mergeA
   io.msInfo.bits.w_grantfirst := state.w_grantfirst

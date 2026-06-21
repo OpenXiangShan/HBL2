@@ -95,9 +95,6 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.fromL2pft.foreach(_ := false.B)
     task.needHint.foreach(_ := a.user.lift(PrefetchKey).getOrElse(false.B))
     task.dirty := false.B
-    // TODO: kept only for TL-to-TL compatibility. TL-to-CHI PutBuffer path must not use these fields.
-    task.putData := 0.U.asTypeOf(new DSBlock)
-    task.usePutData := false.B
     task.way := Mux(cmoAllTaskValid, wayVal, 0.U(wayBits.W))
     task.meta := 0.U.asTypeOf(new MetaEntry)
     task.metaWen := false.B
@@ -142,9 +139,6 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.mshrRetry := false.B
     task.needHint.foreach(_ := false.B)
     task.dirty := false.B
-    // TODO: kept only for TL-to-TL compatibility. TL-to-CHI PutBuffer path must not use these fields.
-    task.putData := 0.U.asTypeOf(new DSBlock)
-    task.usePutData := false.B
     task.way := 0.U(wayBits.W)
     task.meta := 0.U.asTypeOf(new MetaEntry)
     task.metaWen := false.B

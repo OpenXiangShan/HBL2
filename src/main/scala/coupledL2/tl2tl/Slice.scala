@@ -48,7 +48,8 @@ class Slice()(implicit p: Parameters) extends BaseSlice[OuterBundle] {
   val sinkC = Module(new SinkC)
   val sourceC = Module(new SourceC)
   val grantBuf = Module(new GrantBuffer)
-  val refillBuf = Module(new MSHRBuffer(wPorts = 2))
+  val putBuf = Module(new PutBuffer)
+  val refillBuf = Module(new MSHRBuffer(wPorts = 3))
   val releaseBuf = Module(new MSHRBuffer(wPorts = 3))
 
   val prbq = Module(new ProbeQueue())
@@ -83,6 +84,7 @@ class Slice()(implicit p: Parameters) extends BaseSlice[OuterBundle] {
   mshrCtl.io.fromReqArb.status_s1 := reqArb.io.status_s1
   mshrCtl.io.resps.sinkC := sinkC.io.resp
   mshrCtl.io.resps.sinkD := refillUnit.io.resp
+  refillUnit.io.msInfo := mshrCtl.io.msInfo
   mshrCtl.io.resps.sourceC := sourceC.io.resp
   mshrCtl.io.nestedwb := mainPipe.io.nestedwb
   mshrCtl.io.aMergeTask := a_reqBuf.io.aMergeTask
@@ -103,11 +105,11 @@ class Slice()(implicit p: Parameters) extends BaseSlice[OuterBundle] {
   mainPipe.io.bufResp <> sinkC.io.bufResp
   mainPipe.io.toDS.rdata_s5 := dataStorage.io.rdata
   mainPipe.io.toDS.error_s5 := dataStorage.io.error
-  mainPipe.io.refillBufResp_s3.valid := RegNext(refillBuf.io.r.valid, false.B)
-  mainPipe.io.refillBufResp_s3.bits := refillBuf.io.resp.data
-  mainPipe.io.releaseBufResp_s3.valid := RegNext(releaseBuf.io.r.valid, false.B)
-  mainPipe.io.releaseBufResp_s3.bits := releaseBuf.io.resp.data
+  mainPipe.io.refillBufResp_s3 := refillBuf.io.resp.data
+  mainPipe.io.releaseBufResp_s3 := releaseBuf.io.resp.data
+  mainPipe.io.putBufResp_s3 := putBuf.io.resp.data
   mainPipe.io.fromReqArb.status_s1 := reqArb.io.status_s1
+  mainPipe.io.fromReqArb.steer_s2 := reqArb.io.steerToPipe_s2
   mainPipe.io.taskInfo_s1 <> reqArb.io.taskInfo_s1
 
   // priority: nested-ReleaseData / probeAckData [NEW] > mainPipe DS rdata [OLD]
@@ -120,8 +122,14 @@ class Slice()(implicit p: Parameters) extends BaseSlice[OuterBundle] {
   releaseBuf.io.w(1).bits.id := mshrCtl.io.releaseBufWriteId
   releaseBuf.io.w(2) <> mainPipe.io.releaseBufWrite
 
-  refillBuf.io.w(0) <> refillUnit.io.refillBufWrite
-  refillBuf.io.w(1) <> sinkC.io.refillBufWrite
+  refillBuf.io.w(0) := refillUnit.io.refillBufWrite
+  refillBuf.io.w(1) := sinkC.io.refillBufWrite
+  refillBuf.io.w(2) := mainPipe.io.refillBufWrite
+
+  /* Read and write put buffer */
+  sinkA.io.pBufState := putBuf.io.state
+  putBuf.io.w <> sinkA.io.putBufWrite
+  putBuf.io.r := reqArb.io.putBufRead_s2
 
   sourceC.io.in <> mainPipe.io.toSourceC
   sourceC.io.pipeStatusVec := reqArb.io.status_vec ++ mainPipe.io.status_vec_toC

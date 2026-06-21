@@ -308,9 +308,6 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     task.mshrTask := false.B
     task.aliasTask.foreach(_ := cache_alias)
     task.wayMask := 0.U(cacheParams.ways.W)
-    // TL-to-TL compatibility only; TL-to-CHI PutBuffer flow must not carry Put payload in TaskBundle.
-    task.putData := 0.U.asTypeOf(new DSBlock)
-    task.usePutData := false.B
   }
 
   /* ======== Resps to SinkA/B/C Reqs ======== */

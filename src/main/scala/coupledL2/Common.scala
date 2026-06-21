@@ -115,10 +115,6 @@ class TaskBundle(implicit p: Parameters) extends L2Bundle
   // For DirtyKey in Release
   val dirty = Bool()
 
-  // TL-to-TL compatibility fields. TL-to-CHI PutBuffer path must not carry or select Put payload with them.
-  val putData = new DSBlock()
-  val usePutData = Bool()
-
   // if this is an mshr task and it needs to write dir
   val way = UInt(wayBits.W)
   val meta = new MetaEntry()
@@ -285,6 +281,10 @@ class MSHRInfo(implicit p: Parameters) extends L2Bundle with HasTLChannelBits {
   // to drop duplicate prefetch reqs
   val isAcqOrPrefetch = Bool()
   val isPrefetch = Bool()
+  // True when the original request is an A-channel Put.
+  // We need this field to suppress resp data in TL-RefillUnit or in CHI-RXDAT when future PutPartialData is supported.
+  // Currently consumed only by the TL-to-TL RefillUnit to suppress Put-triggered refill data.
+  val isPut = Bool()
 
   // whether the mshr_task already in mainpipe
   val param = UInt(3.W)
