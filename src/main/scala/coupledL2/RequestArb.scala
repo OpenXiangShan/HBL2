@@ -49,7 +49,10 @@ class SteerS2ToS3 extends Bundle {
   val sinkCDataRead  = Bool() // SinkC dataBuffer read in s2
 
   def assertOH: Unit = {
-    val issuedVec = Seq(refillBufRead, releaseBufRead, putBufRead, sinkCDataRead)
+    // TODO: Make this assertion more precise.
+    // This assertion is intentionally relaxed for now: refillBufRead and releaseBufRead
+    // may be asserted in the same S2 cycle for an MSHR release task in the tl2tl branch.
+    val issuedVec = Seq(refillBufRead || releaseBufRead, putBufRead, sinkCDataRead)
     assert(PopCount(VecInit(issuedVec)) <= 1.U, "Multiple data source read req issued in the same cycle!")
   }
 }
