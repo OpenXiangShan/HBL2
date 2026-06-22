@@ -39,6 +39,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     /* handle set conflict in req arb */
     val fromReqArb = Input(new Bundle() {
       val status_s1 = new PipeEntranceStatus
+      val steer_s2  = new SteerS2ToS3
     })
     /* block B and C at Entrance */
     val toReqArb = Output(new BlockInfo())
@@ -67,9 +68,10 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     /* read C-channel Release Data and write into DS */
     val bufResp = Input(new PipeBufferResp)
 
-    /* get ReleaseBuffer and RefillBuffer read result */
-    val refillBufResp_s3 = Flipped(ValidIO(new DSBlock))
-    val releaseBufResp_s3 = Flipped(ValidIO(new DSBlock))
+    /* get ReleaseBuffer, RefillBuffer, and PutBuffer read result */
+    val refillBufResp_s3  = Input(new DSBlock)
+    val releaseBufResp_s3 = Input(new DSBlock)
+    val putBufResp_s3     = Input(new DSBlock)
 
     /* read or write data storage */
     val toDS = new Bundle() {
@@ -94,6 +96,8 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
 
     /* read DS and write data into ReleaseBuf when the task needs to replace */
     val releaseBufWrite = ValidIO(new MSHRBufWrite())
+    /* Store Put data not consumed by DS into RefillBuffer */
+    val refillBufWrite  = ValidIO(new MSHRBufWrite())
 
     /* nested writeback */
     val nestedwb = Output(new NestedWriteback())
@@ -136,7 +140,8 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   val d_s3, d_s4, d_s5 = Wire(io.toSourceD.cloneType)
 
   /* ======== Stage 2 ======== */
-  val task_s2 = io.taskFromArb_s2
+  val task_s2  = io.taskFromArb_s2
+  val steer_s2 = io.fromReqArb.steer_s2
 
   /* ======== Stage 3 ======== */
   val task_s3 = RegInit(0.U.asTypeOf(Valid(new TaskBundle)))
@@ -169,7 +174,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   val mshr_grant_s3             = mshr_req_s3 && req_s3.fromA && (req_s3.opcode === Grant || req_s3.opcode === GrantData)
   val mshr_grantdata_s3         = mshr_req_s3 && req_s3.fromA && req_s3.opcode === GrantData
   val mshr_accessackdata_s3     = mshr_req_s3 && req_s3.fromA && req_s3.opcode === AccessAckData
-  val mshr_putack_s3            = mshr_req_s3 && req_s3.fromA && req_s3.opcode === AccessAck && req_s3.usePutData
+  val mshr_putack_s3            = mshr_req_s3 && req_s3.fromA && req_s3.opcode === AccessAck
   val mshr_hintack_s3           = mshr_req_s3 && req_s3.fromA && req_s3.opcode === HintAck
   val mshr_cmoresp_s3           = mshr_req_s3 && req_s3.fromA && req_s3.opcode === CBOAck
 
@@ -220,7 +225,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   val dataError_s3              = meta_s3.dataErr
   val l2Error_s3                = io.dirResp_s3.error
 
-  val mshr_refill_s3 = mshr_accessackdata_s3 || mshr_hintack_s3 || mshr_grant_s3 // needs refill to L2 DS
+  val mshr_refill_s3 = mshr_accessackdata_s3 || mshr_putack_s3 || mshr_hintack_s3 || mshr_grant_s3 // needs refill to L2 DS
   val replResp_valid_s3 = io.replResp.valid
   val replResp_valid_s4 = RegNext(io.replResp.valid, init = false.B)
   val replResp_valid_hold = replResp_valid_s3 || replResp_valid_s4
@@ -230,7 +235,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   /* ======== Interact with MSHR ======== */
   // *NOTICE: A Channel requests should be blocked by RequestBuffer when MSHR nestable,
   //          'nestable_*' must not be used here.
-  val acquire_on_miss_s3 = req_acquire_s3 || req_prefetch_s3 || req_get_s3
+  val acquire_on_miss_s3 = req_acquire_s3 || req_prefetch_s3 || req_get_s3 || req_putfull_s3
   val acquire_on_hit_s3 = meta_s3.state === BRANCH && req_needT_s3 && !req_prefetch_s3
   val need_acquire_s3_a = req_s3.fromA && (Mux(
     dirResult_s3.hit,
@@ -303,7 +308,6 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     task.mshrTask := false.B
     task.aliasTask.foreach(_ := cache_alias)
     task.wayMask := 0.U(cacheParams.ways.W)
-    // TODO
   }
 
   /* ======== Resps to SinkA/B/C Reqs ======== */
@@ -463,7 +467,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   source_req_s3.isKeyword.foreach(_ := req_s3.isKeyword.getOrElse(false.B))
 
   /* ======== Interact with DS ======== */
-  val data_s3 = Mux(io.releaseBufResp_s3.valid, io.releaseBufResp_s3.bits.data, io.refillBufResp_s3.bits.data)
+  val data_s3 = Mux(steer_s2.releaseBufRead, io.releaseBufResp_s3.data, io.refillBufResp_s3.data)
   val c_releaseData_s3 = io.bufResp.data.asUInt
   val hasData_s3_tl = source_req_s3.opcode(0) // whether to respond data to TileLink-side
   val hasData_s3_chi = source_req_s3.toTXDAT // whether to respond data to CHI-side
@@ -475,26 +479,29 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   val need_data_cmo = cmo_cbo_s3 && nestable_dirResult_s3.hit && nestable_meta_s3.dirty
   val ren = need_data_a || need_data_b || need_data_mshr_repl || need_data_cmo
 
+  // Write ReleaseData from upstream c-channel into DS.
+  // Because of the inclusive property of the cache, when Release comes, the cache line must be in the cache and the directory must hit, 
+  // so it is safe to directly write ReleaseData into DS without MSHR.
   val wen_c = sinkC_req_s3 && isParamFromT(req_s3.param) && req_s3.opcode(0) && dirResult_s3.hit
-  val wen_mshr = req_s3.dsWen && (
-    mshr_snpRespX_s3 || mshr_snpRespDataX_s3 ||
-    mshr_writeCleanFull_s3 || mshr_writeBackFull_s3 || 
-    mshr_writeEvictFull_s3 || mshr_writeEvictOrEvict_s3 || mshr_evict_s3 ||
-    mshr_refill_s3 && !need_repl && !retry ||
-    mshr_putack_s3
-  )
-  val wen_put = req_putfull_s3 && dirResult_s3.hit && isT(meta_s3.state) && !need_mshr_s3_a
-  val wen = wen_c || wen_put || wen_mshr
 
-  // This is to let io.toDS.req_s3.valid hold for 2 cycles (see DataStorage for details)
-  val task_s3_valid_hold2 = RegInit(0.U(2.W))
-  when(task_s2.valid) {
-    task_s3_valid_hold2 := "b11".U
-  }.otherwise {
-    task_s3_valid_hold2 := task_s3_valid_hold2 >> 1.U
-  }
+  // TODO: Can we replace 'isT(meta_s3.state) && !meta_has_clients_s3' with isTip(meta_s3.state)?
+  // For Put, only allow write data from PutBuffer into DS when hit with writeable state and no client.
+  // Otherwise, we will allocate a MSHR for Put and write data goes to RefillBuffer.
+  val wen_src_putBuf = steer_s2.putBufRead && dirResult_s3.hit && isT(meta_s3.state) && !meta_has_clients_s3
+
+  val wen_src_refillBuf  = steer_s2.refillBufRead  && req_s3.dsWen && !need_repl && !retry
+  val wen_src_releaseBuf = steer_s2.releaseBufRead && req_s3.dsWen
+  val wen = wen_c || wen_src_putBuf || wen_src_refillBuf || wen_src_releaseBuf
+
   val ds_en = task_s3.valid && (ren || wen)
-  val ds_valid = if (enableMCP2) task_s3_valid_hold2(0) && (ren || wen) else task_s3.valid && (ren || wen)
+  val ds_wen_s3 = task_s3.valid && wen
+
+  // Under MCP2, DataStorage requires io.toDS.req_s3.valid and its payloads to remain stable for an extra cycle after ds_en is asserted.
+  // Since normal S3 steering is deasserted once the task leaves S3, valid and wen must be explicitly held for the MCP2 hold cycle.
+  val ds_valid = if (enableMCP2) ds_en || RegNext(ds_en) else ds_en
+  // TODO: task_s3.valid can be removed if UpReleaseBuffer is impl and wen_c is replaced with steer.
+  //       Because steers imply that the task is valid.
+  val ds_wen   = if (enableMCP2) ds_wen_s3 || RegNext(ds_wen_s3) else ds_wen_s3
 
   io.toDS.en_s3 := ds_en
   io.toDS.req_s3.valid := ds_valid
@@ -504,23 +511,25 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     Mux(mshr_req_s3, req_s3.way, dirResult_s3.way)
   )
   io.toDS.req_s3.bits.set := Mux(mshr_req_s3, req_s3.set, dirResult_s3.set)
-  io.toDS.req_s3.bits.wen := wen
-  io.toDS.wdata_s3.data := Mux(
+  io.toDS.req_s3.bits.wen := ds_wen
+  io.toDS.wdata_s3.data   := Mux(
     !mshr_req_s3,
-    Mux(req_putfull_s3, req_s3.putData.data, c_releaseData_s3),
+    Mux(req_putfull_s3, io.putBufResp_s3.data, c_releaseData_s3),
     Mux(
-      req_s3.usePutData,
-      req_s3.putData.data,
-      Mux(
-        req_s3.useProbeData,
-        io.releaseBufResp_s3.bits.data,
-        io.refillBufResp_s3.bits.data
-      )
+      req_s3.useProbeData,
+      io.releaseBufResp_s3.data,
+      io.refillBufResp_s3.data
     )
   )
 
-  assert(!(task_s3.valid && req_putfull_s3 && (!dirResult_s3.hit || !isT(meta_s3.state))),
-    "Matrix PutFullData only supports hit with write-capable state; TODO: support miss/permission-acquire path")
+  /* ======== Route Put data not consumed by DS to the RefillBuffer ======== */
+  // A valid task that read PutBuffer in s2 must consume that payload in s3: direct DS write or RefillBuffer handoff.
+  // As a result, if the put data is NOT consumed by DS (!wen_src_putBuf),
+  // then it must be written into RefillBuffer for later use.
+  io.refillBufWrite.valid         := task_s3.valid && steer_s2.putBufRead && !wen_src_putBuf
+  io.refillBufWrite.bits.id       := io.fromMSHRCtl.mshr_alloc_ptr
+  io.refillBufWrite.bits.data     := io.putBufResp_s3
+  io.refillBufWrite.bits.beatMask := Fill(beatSize, true.B)
 
   /* ======== Read DS and store data in Buffer ======== */
   // A: need_write_releaseBuf indicates that DS should be read and the data will be written into ReleaseBuffer
@@ -612,7 +621,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     MetaEntry()
   )
 
-  io.tagWReq.valid := task_s3.valid && req_s3.tagWen && mshr_refill_s3 && !retry
+  io.tagWReq.valid := task_s3.valid && req_s3.tagWen && !retry
   io.tagWReq.bits.set := req_s3.set
   io.tagWReq.bits.way := Mux(mshr_refill_s3 && req_s3.replTask, io.replResp.bits.way, req_s3.way)
   io.tagWReq.bits.wtag := req_s3.tag

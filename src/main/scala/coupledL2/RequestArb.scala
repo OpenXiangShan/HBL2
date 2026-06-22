@@ -26,8 +26,41 @@ import org.chipsalliance.cde.config.Parameters
 import coupledL2.tl2tl._
 import coupledL2.tl2chi._
 
+/*
+ * SteerS2ToS3 carries local pipeline steering metadata from RequestArb s2 to MainPipe s3.
+ * Each bit records that s2 has issued a non-blocking read to one task data source.
+ * Those sources return data in the next cycle, so s3 can identify which returned data
+ * is meaningful without re-deriving the same intent from opcode, channel, and task attributes.
+ *
+ * Keep this bundle limited to semantic facts already resolved in s2 and consumed in s3.
+ * It improves readability and timing by avoiding duplicated decode logic in s3, but it
+ * must not become a replacement for the full read-issue or DS write-enable conditions.
+ *
+ * Task data sources include:
+ * - RefillBuffer
+ * - ReleaseBuffer
+ * - PutBuffer  in SinkA
+ * - DataBuffer in SinkC (TODO)
+ */
+class SteerS2ToS3 extends Bundle {
+  val refillBufRead  = Bool() // RefillBuffer     read in s2
+  val releaseBufRead = Bool() // ReleaseBuffer    read in s2
+  val putBufRead     = Bool() // SinkA PutBuffer  read in s2
+  val sinkCDataRead  = Bool() // SinkC dataBuffer read in s2
+
+  def assertOH: Unit = {
+    // TODO: Make this assertion more precise.
+    // This assertion is intentionally relaxed for now: refillBufRead and releaseBufRead
+    // may be asserted in the same S2 cycle for an MSHR release task in the tl2tl branch.
+    val issuedVec = Seq(refillBufRead || releaseBufRead, putBufRead, sinkCDataRead)
+    assert(PopCount(VecInit(issuedVec)) <= 1.U, "Multiple data source read req issued in the same cycle!")
+  }
+}
+
 class RequestArb(implicit p: Parameters) extends L2Module
   with HasCHIOpcodes {
+
+  require(beatSize == 2)
 
   val io = IO(new Bundle() {
     /* receive incoming tasks */
@@ -49,10 +82,14 @@ class RequestArb(implicit p: Parameters) extends L2Module
     val taskToPipe_s2 = ValidIO(new TaskBundle())
     /* send s1 task info to mainpipe to help hint */
     val taskInfo_s1 = ValidIO(new TaskBundle())
+    /* send s2 steer signals to mainpipe s3 */
+    val steerToPipe_s2 = Output(new SteerS2ToS3)
 
     /* send mshrBuf read request */
     val refillBufRead_s2 = ValidIO(new MSHRBufRead)
     val releaseBufRead_s2 = ValidIO(new MSHRBufRead)
+    /* send channel task dataBuf read request */
+    val putBufRead_s2 = ValidIO(new PutBufRead) // read sinkA putBuf
 
     /* status of each pipeline stage */
     val status_s1 = Output(new PipeEntranceStatus) // set & tag of entrance status
@@ -92,12 +129,11 @@ class RequestArb(implicit p: Parameters) extends L2Module
   val s2_ready  = Wire(Bool())
   val mshr_task_s1 = RegInit(0.U.asTypeOf(Valid(new TaskBundle())))
 
-  val s1_put_install = mshr_task_s1.bits.opcode === AccessAck && mshr_task_s1.bits.usePutData
   val s1_needs_replRead = mshr_task_s1.valid && mshr_task_s1.bits.fromA && mshr_task_s1.bits.replTask && (
-    mshr_task_s1.bits.opcode === Grant ||
-    mshr_task_s1.bits.opcode === GrantData ||
+    mshr_task_s1.bits.opcode === Grant         ||
+    mshr_task_s1.bits.opcode === GrantData     ||
     mshr_task_s1.bits.opcode === AccessAckData ||
-    s1_put_install ||
+    mshr_task_s1.bits.opcode === AccessAck     || // For MSHR Task caused by Put.
     mshr_task_s1.bits.opcode === HintAck
   )
 
@@ -107,9 +143,6 @@ class RequestArb(implicit p: Parameters) extends L2Module
   assert(!s1_needs_replRead || mshr_task_s1.bits.opcode =/= AccessAckData || mshr_task_s1.bits.dsWen,
     "replTask of AccessAckData with no DataStorage write was not expected")
 
-  assert(!s1_needs_replRead || mshr_task_s1.bits.opcode =/= AccessAck || !mshr_task_s1.bits.usePutData || mshr_task_s1.bits.dsWen,
-    "replTask of AccessAck Put install with no DataStorage write was not expected")
-  
   assert(!s1_needs_replRead || mshr_task_s1.bits.opcode =/= HintAck || mshr_task_s1.bits.dsWen,
     "replTask of HintAck with no DataStorage write was not expected")
 
@@ -224,13 +257,15 @@ class RequestArb(implicit p: Parameters) extends L2Module
   // MSHR task
   val mshrTask_s2 = task_s2.valid && task_s2.bits.mshrTask
   val mshrTask_s2_a_upwards = task_s2.bits.fromA &&
-    (task_s2.bits.opcode === GrantData || task_s2.bits.opcode === Grant && task_s2.bits.dsWen ||
-      task_s2.bits.opcode === AccessAckData || task_s2.bits.opcode === HintAck && task_s2.bits.dsWen)
+    ( task_s2.bits.opcode === GrantData     || 
+      task_s2.bits.opcode === Grant         && task_s2.bits.dsWen ||
+      task_s2.bits.opcode === AccessAck     || // for mshr grant task caused by put
+      task_s2.bits.opcode === AccessAckData || 
+      task_s2.bits.opcode === HintAck       && task_s2.bits.dsWen)
   // For GrantData, read refillBuffer
   // Caution: GrantData-alias may read DataStorage or ReleaseBuf instead
   // Release-replTask normally reads refillBuf and writes that data into DS.
-  // Replacement-safe PutFullData install carries its final DS data in-task instead.
-  val releaseRefillData = task_s2.bits.replTask && !task_s2.bits.usePutData && (if (enableCHI) {
+  val releaseRefillData = task_s2.bits.replTask && (if (enableCHI) {
     task_s2.bits.toTXREQ && (
       task_s2.bits.chiOpcode.get === WriteBackFull ||
       task_s2.bits.chiOpcode.get === WriteEvictFull ||
@@ -279,7 +314,23 @@ class RequestArb(implicit p: Parameters) extends L2Module
     task_s2.bits.mshrId
   )
 
-  require(beatSize == 2)
+  /* putBuffer read request generation */
+  // **Always** read PutBuffer for PutFullData tasks because their payload is guaranteed to be consumed in s3:
+  // it is either written directly to DS or moved into RefillBuffer for later MSHR handling.
+  // After s3, PutBuffer no longer owns the payload.
+  // PutFullData is enough to identify the original SinkA Put task: MSHR tasks get a reallocated opcode 'AccessAck' and
+  // cannot still be 'PutFullData'.
+  io.putBufRead_s2.valid   := task_s2.valid && task_s2.bits.fromA && !task_s2.bits.mshrTask && task_s2.bits.opcode === PutFullData
+  io.putBufRead_s2.bits.id := task_s2.bits.bufIdx
+
+  /* s2 steer signals to s3 */
+  private val steer_s2 = RegInit(0.U.asTypeOf(io.steerToPipe_s2))
+  steer_s2.refillBufRead  := io.refillBufRead_s2 .valid
+  steer_s2.releaseBufRead := io.releaseBufRead_s2.valid
+  steer_s2.putBufRead     := io.putBufRead_s2    .valid
+  steer_s2.sinkCDataRead  := false.B // TODO: currently always false
+
+  io.steerToPipe_s2 := steer_s2
 
   /* status of each pipeline stage */
   io.status_s1.sets := VecInit(Seq(C_task.set, B_task.set, io.ASet, mshr_task_s1.bits.set))
@@ -304,6 +355,10 @@ class RequestArb(implicit p: Parameters) extends L2Module
     }
   }
 
+  // Assertions
+  io.steerToPipe_s2.assertOH
+
+  // Don't Touch
   dontTouch(io)
 
   // Performance counters
