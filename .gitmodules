@@ -7,3 +7,6 @@
 [submodule "HuanCun"]
 	path = HuanCun
 	url = https://github.com/OpenXiangShan/HuanCun.git
+[submodule "ZhuJiang"]
+	path = ZhuJiang
+	url = https://github.com/OpenXiangShan/ZhuJiang.git

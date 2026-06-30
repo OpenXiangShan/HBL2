@@ -98,8 +98,59 @@ object CoupledL2 extends HasChisel with $file.common.CoupledL2Module {
 
   def huancunModule: ScalaModule = huancun
 
-  object test extends SbtTests with TestModule.ScalaTest
+  object test extends SbtTests with TestModule.ScalaTest {
+    override def sources = T.sources {
+      Seq(
+        PathRef(pwd / "src" / "test" / "scala" / "TestProbeQueue.scala"),
+        PathRef(pwd / "src" / "test" / "scala" / "TestSplittedSRAM.scala"),
+        PathRef(pwd / "src" / "test" / "scala" / "TestTop.scala"),
+        PathRef(pwd / "src" / "test" / "scala" / "TestTopMatrix.scala"),
+        PathRef(pwd / "src" / "test" / "scala" / "TestWritebackQueue.scala"),
+        PathRef(pwd / "src" / "test" / "scala" / "chi" / "TestTop.scala"),
+        PathRef(pwd / "src" / "test" / "scala" / "tltest")
+      )
+    }
+  }
+
+  object testtop extends Module {
+    object l2 extends HasChisel {
+      override def millSourcePath = pwd
+      override def moduleDeps = super.moduleDeps ++ Seq(CoupledL2)
+      override def sources = T.sources {
+        Seq(
+          PathRef(pwd / "src" / "test" / "scala" / "TestTop.scala"),
+          PathRef(pwd / "src" / "test" / "scala" / "TestTopMatrix.scala"),
+          PathRef(pwd / "src" / "test" / "scala" / "chi" / "TestTop.scala")
+        )
+      }
+      override def scalacOptions = super.scalacOptions() ++ Agg("-deprecation", "-feature")
+    }
+
+    object zhujiang extends HasChisel {
+      override def millSourcePath = pwd
+      override def moduleDeps = super.moduleDeps ++ Seq(CoupledL2, zhujiangCompat)
+      override def sources = T.sources {
+        Seq(
+          PathRef(pwd / "src" / "test" / "scala" / "ZhuJiangBridge.scala"),
+          PathRef(pwd / "src" / "test" / "scala" / "TestTopZhuJiang.scala")
+        )
+      }
+      override def scalacOptions = super.scalacOptions() ++ Agg("-deprecation", "-feature")
+    }
+  }
 
   override def scalacOptions = super.scalacOptions() ++ Agg("-deprecation", "-feature")
 
+}
+
+object zhujiangCompat extends HasChisel {
+  override def millSourcePath = pwd / "ZhuJiang"
+  override def moduleDeps = super.moduleDeps ++ Seq(rocketchip, utility)
+  override def sources = T.sources {
+    Seq(
+      PathRef(millSourcePath / "src" / "main" / "scala"),
+      PathRef(millSourcePath / "xs-utils" / "src" / "main" / "scala")
+    )
+  }
+  override def scalacOptions = super.scalacOptions() ++ Agg("-deprecation", "-feature")
 }

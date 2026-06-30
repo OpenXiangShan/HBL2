@@ -68,21 +68,30 @@ class TL2CHICoupledL2(implicit p: Parameters) extends CoupledL2Base {
   class CoupledL2Imp(wrapper: LazyModule) extends BaseCoupledL2Imp(wrapper)
     with HasCHIOpcodes {
 
-    val io_chi = IO(new PortIO)
+    val io_chi = Option.when(!p(EnableL2DecoupledDownstreamCHI))(IO(new PortIO))
+    val io_decoupled_chi = Option.when(p(EnableL2DecoupledDownstreamCHI))(IO(new DecoupledPortIO))
     val io_nodeID = IO(Input(UInt()))
     val io_cpu_wfi = Option.when(cacheParams.enableL2Flush) (IO(Input(Bool())))
 
     // Check port width
-    require(io_chi.tx.rsp.getWidth == io_chi.rx.rsp.getWidth);
-    require(io_chi.tx.dat.getWidth == io_chi.rx.dat.getWidth);
-
     // Display info
     println(s"CHI Issue Version: ${p(CHIIssue)}")
-    println(s"CHI REQ Flit Width: ${io_chi.tx.req.flit.getWidth}")
-    println(s"CHI RSP Flit Width: ${io_chi.tx.rsp.flit.getWidth}")
-    println(s"CHI SNP Flit Width: ${io_chi.rx.snp.flit.getWidth}")
-    println(s"CHI DAT Flit Width: ${io_chi.rx.dat.flit.getWidth}")
-    println(s"CHI Port Width: ${io_chi.getWidth}")
+    io_chi.foreach { chi =>
+      require(chi.tx.rsp.getWidth == chi.rx.rsp.getWidth);
+      require(chi.tx.dat.getWidth == chi.rx.dat.getWidth);
+      println(s"CHI REQ Flit Width: ${chi.tx.req.flit.getWidth}")
+      println(s"CHI RSP Flit Width: ${chi.tx.rsp.flit.getWidth}")
+      println(s"CHI SNP Flit Width: ${chi.rx.snp.flit.getWidth}")
+      println(s"CHI DAT Flit Width: ${chi.rx.dat.flit.getWidth}")
+      println(s"CHI Port Width: ${chi.getWidth}")
+    }
+    io_decoupled_chi.foreach { chi =>
+      println(s"Decoupled CHI REQ Flit Width: ${chi.tx.req.bits.getWidth}")
+      println(s"Decoupled CHI RSP Flit Width: ${chi.tx.rsp.bits.getWidth}")
+      println(s"Decoupled CHI SNP Flit Width: ${chi.rx.snp.bits.getWidth}")
+      println(s"Decoupled CHI DAT Flit Width: ${chi.rx.dat.bits.getWidth}")
+      println(s"Decoupled CHI Port Width: ${chi.getWidth}")
+    }
 
     println(s"MMIO:")
     mmioNode.edges.in.headOption.foreach { n =>
@@ -252,20 +261,29 @@ class TL2CHICoupledL2(implicit p: Parameters) extends CoupledL2Base {
           Cat(slices.zipWithIndex.map { case (s, i) => s.io.out.rx.dat.ready && rxdatSliceID === i.U}).orR
         )
 
-        val linkMonitor = Module(new LinkMonitor)
-        val rxdatPipe = Pipeline(linkMonitor.io.in.rx.dat)
-        val rxrspPipe = Pipeline(linkMonitor.io.in.rx.rsp)
-        linkMonitor.io.in.tx.req <> txreq
-        linkMonitor.io.in.tx.rsp <> txrsp
-        linkMonitor.io.in.tx.dat <> txdat
-        rxsnp <> linkMonitor.io.in.rx.snp
-        rxrsp <> rxrspPipe
-        rxdat <> rxdatPipe
-        io_chi <> linkMonitor.io.out
-        linkMonitor.io.nodeID := io_nodeID
-        /* exit coherency when: l2 flush of all slices is done and core is in WFI state */
-        linkMonitor.io.exitco.foreach { _ :=
-          Cat(slices.zipWithIndex.map { case (s, i) => s.io.l2FlushDone.getOrElse(false.B)}).andR && io_cpu_wfi.getOrElse(false.B)
+        if (p(EnableL2DecoupledDownstreamCHI)) {
+          io_decoupled_chi.get.tx.req <> txreq
+          io_decoupled_chi.get.tx.rsp <> txrsp
+          io_decoupled_chi.get.tx.dat <> txdat
+          rxsnp <> io_decoupled_chi.get.rx.snp
+          rxrsp <> Pipeline(io_decoupled_chi.get.rx.rsp)
+          rxdat <> Pipeline(io_decoupled_chi.get.rx.dat)
+        } else {
+          val linkMonitor = Module(new LinkMonitor)
+          val rxdatPipe = Pipeline(linkMonitor.io.in.rx.dat)
+          val rxrspPipe = Pipeline(linkMonitor.io.in.rx.rsp)
+          linkMonitor.io.in.tx.req <> txreq
+          linkMonitor.io.in.tx.rsp <> txrsp
+          linkMonitor.io.in.tx.dat <> txdat
+          rxsnp <> linkMonitor.io.in.rx.snp
+          rxrsp <> rxrspPipe
+          rxdat <> rxdatPipe
+          io_chi.get <> linkMonitor.io.out
+          linkMonitor.io.nodeID := io_nodeID
+          /* exit coherency when: l2 flush of all slices is done and core is in WFI state */
+          linkMonitor.io.exitco.foreach { _ :=
+            Cat(slices.zipWithIndex.map { case (s, i) => s.io.l2FlushDone.getOrElse(false.B)}).andR && io_cpu_wfi.getOrElse(false.B)
+          }
         }
 
         /**

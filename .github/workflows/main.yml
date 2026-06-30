@@ -31,6 +31,8 @@ jobs:
         run: cd HuanCun && git fetch --all && git merge-base --is-ancestor `git rev-parse HEAD` origin/master
       - name: check utility
         run: cd utility && git fetch --all && git merge-base --is-ancestor `git rev-parse HEAD` origin/master
+      - name: check ZhuJiang
+        run: cd ZhuJiang && git fetch --all && git merge-base --is-ancestor `git rev-parse HEAD` origin/master
 
   setup-verilator:
     strategy:
@@ -96,6 +98,7 @@ jobs:
       RUN_ARCHIVE: coupledL2-tl-test-new-run-${{ github.sha }}
       RUN_ARCHIVE_TL: coupledL2-tl-test-new-run-${{ github.sha }}-tilelink.tar.gz
       RUN_ARCHIVE_CHI: coupledL2-tl-test-new-run-${{ github.sha }}-chi.tar.gz
+      RUN_ARCHIVE_ZHUJIANG: coupledL2-tl-test-new-run-${{ github.sha }}-zhujiang.tar.gz
       VERILATOR_ARCHIVE: verilator-ubuntu-22.04-clang-17.tar.gz
 
     # Steps represent a sequence of tasks that will be executed as part of the job
@@ -191,6 +194,27 @@ jobs:
         run: |
             test -d ./tl-test-new/run || mkdir -p ./tl-test-new/run
             tar -zcf ${{ env.RUN_ARCHIVE_CHI }} ./tl-test-new/run
+
+      # Clean artifacts folder (./tl-test-new/run) after successful run
+      - name: Unit Test for CoupledL2 + ZhuJiang
+        run: |
+            rm -rf tl-test-new
+            git clone --branch feat-zhujiang --single-branch https://github.com/OpenXiangShan/tl-test-new
+            cd ./tl-test-new
+            sed -i 's/ari.target.*/ari.target = 100/g' ./configs/user.tltest.ini
+            sed -i 's/cmo.enable .*=.*/cmo.enable = 1/g' ./configs/user.tltest.ini
+            sed -i 's/cmo.enable.cbo.clean.*=.*/cmo.enable.cbo.clean = 1/g' ./configs/user.tltest.ini
+            sed -i 's/cmo.enable.cbo.flush.*=.*/cmo.enable.cbo.flush = 1/g' ./configs/user.tltest.ini
+            sed -i 's/cmo.enable.cbo.inval.*=.*/cmo.enable.cbo.inval = 1/g' ./configs/user.tltest.ini
+            rm -rf ./dut/CoupledL2 && ln -s ../.. ./dut/CoupledL2
+            make zhujiang-test-l2l3l2 run THREADS_BUILD=4 CXX_COMPILER=clang++-17
+            rm -rf run/*.vcd run/*.fst run/*.log run/*.db
+
+      - name: Tar up artifacts of Unit Test for CoupledL2 + ZhuJiang
+        if: always()
+        run: |
+            test -d ./tl-test-new/run || mkdir -p ./tl-test-new/run
+            tar -zcf ${{ env.RUN_ARCHIVE_ZHUJIANG }} ./tl-test-new/run
       
       # Clean artifacts folder (./tl-test-new/run) after successful run
       - name: Unit Test for TileLink version

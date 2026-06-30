@@ -28,16 +28,18 @@ CHI_TOP_ARGS = --issue $(ISSUE) --core $(NUM_CORE) --tl-ul $(NUM_TL_UL) --bank $
 			   --etime $(BY_ETIME) --vtime $(BY_VTIME) \
 		       --fpga $(FPGA)
 BUILD_DIR = ./build
+BUILD_DIR_ZJ_SINGLECORE = ./build/zj_singlecore
+BUILD_DIR_ZJ_DUALCORE = ./build/zj_dualcore
 TOP_V = $(BUILD_DIR)/$(TOP).sv
 MEM_GEN = ./scripts/vlsi_mem_gen
 MEM_GEN_SEP = ./scripts/gen_sep_mem.sh
 
 gen-test-top:
-	mill -i CoupledL2.test.runMain coupledL2.$(TOP)_$(SYSTEM) -td $(BUILD_DIR) --target systemverilog --split-verilog
+	mill -i CoupledL2.testtop.l2.runMain coupledL2.$(TOP)_$(SYSTEM) -td $(BUILD_DIR) --target systemverilog --split-verilog
 	$(MEM_GEN_SEP) "$(MEM_GEN)" "$(TOP_V).conf" "$(BUILD_DIR)"
 
 gen-test-top-chi:
-	mill -i CoupledL2.test.runMain coupledL2.$(TOP)_$(SYSTEM) -td $(BUILD_DIR) $(CHI_TOP_ARGS) --target systemverilog --split-verilog
+	mill -i CoupledL2.testtop.l2.runMain coupledL2.$(TOP)_$(SYSTEM) -td $(BUILD_DIR) $(CHI_TOP_ARGS) --target systemverilog --split-verilog
 	$(MEM_GEN_SEP) "$(MEM_GEN)" "$(TOP_V).conf" "$(BUILD_DIR)"
 
 gen-test-top-matrix:
@@ -77,6 +79,12 @@ test-top-chi-quadcore-0ul:
 test-top-chi-quadcore-2ul:
 	$(MAKE) gen-test-top-chi SYSTEM=CHIL2 $(CHI_PASS_ARGS) NUM_CORE=4 NUM_TL_UL=2
 
+test-top-zhujiang-singlecore:
+	mill -i CoupledL2.testtop.zhujiang.runMain zhujiang.TestTopZhuJiang_SingleCore -td $(BUILD_DIR_ZJ_SINGLECORE) --target systemverilog --split-verilog
+
+test-top-zhujiang-dualcore:
+	mill -i CoupledL2.testtop.zhujiang.runMain zhujiang.TestTopZhuJiang_DualCore -td $(BUILD_DIR_ZJ_DUALCORE) --target systemverilog --split-verilog
+
 clean:
 	rm -rf ./build
 
@@ -92,4 +100,4 @@ reformat:
 checkformat:
 	mill -i __.checkFormat
 
-.PHONY: init bsp checkformat clean compile idea reformat 
+.PHONY: init bsp checkformat clean compile idea reformat
