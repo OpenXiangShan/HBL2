@@ -260,6 +260,7 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
   ms_task.ameChannel.foreach(_ := req_s3.ameChannel.getOrElse(0.U))
   ms_task.ameIndex.foreach(_ := req_s3.ameIndex.getOrElse(0.U))
   ms_task.matrixTask.foreach(_ := req_s3.matrixTask.getOrElse(false.B))
+  ms_task.matrixAB         := req_s3.matrixAB
   /* ======== Resps to SinkA/B/C Reqs ======== */
   val sink_resp_s3 = WireInit(0.U.asTypeOf(Valid(new TaskBundle))) // resp for sinkA/B/C request that does not need to alloc mshr
   val sink_resp_s3_a_promoteT = dirResult_s3.hit && isT(meta_s3.state)
@@ -385,7 +386,8 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
     alias = Some(metaW_s3_a_alias),
     accessed = true.B,
     tagErr = meta_s3.tagErr,
-    dataErr = meta_s3.dataErr
+    dataErr = meta_s3.dataErr,
+    matrixAB = false.B
   )
   val metaW_s3_b = Mux(req_s3.param === toN, MetaEntry(),
     MetaEntry(
@@ -394,7 +396,8 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
       clients = meta_s3.clients,
       alias = meta_s3.alias,
       tagErr = meta_s3.tagErr,
-      dataErr = meta_s3.dataErr
+      dataErr = meta_s3.dataErr,
+      matrixAB = meta_s3.matrixAB
     )
   )
 
@@ -405,7 +408,8 @@ class MainPipe(implicit p: Parameters) extends L2Module with HasPerfEvents {
     alias = meta_s3.alias,
     accessed = meta_s3.accessed,
     tagErr = Mux(wen_c, req_s3.denied, meta_s3.tagErr),
-    dataErr = Mux(wen_c, req_s3.corrupt, meta_s3.dataErr) // update error when write DS
+    dataErr = Mux(wen_c, req_s3.corrupt, meta_s3.dataErr), // update error when write DS
+    matrixAB = meta_s3.matrixAB && !wen_c
   )
   // use merge_meta if mergeA
   val metaW_s3_mshr = WireInit(Mux(req_s3.mergeA, req_s3.aMergeTask.meta, req_s3.meta))

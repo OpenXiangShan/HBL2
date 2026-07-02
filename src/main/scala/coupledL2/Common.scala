@@ -43,7 +43,9 @@ trait HasTLChannelBits { this: Bundle =>
 
 object MatrixInfo {
   def width = 2
-  def isMatrix(m: UInt): Bool = m(0)
+  def isAB(m: UInt): Bool = m === "b01".U
+  def isC(m: UInt): Bool = m === "b11".U
+  def isMatrix(m: UInt): Bool = isAB(m) || isC(m)
 }
 
 trait HasMatrixType {
@@ -136,6 +138,7 @@ class TaskBundle(implicit p: Parameters) extends L2Bundle
   val ameChannel = Option.when(enableMatrix)(UInt(4.W))
   val ameIndex = Option.when(enableMatrix)(UInt(7.W))
   val matrixTask = Option.when(enableMatrix)(Bool())
+  val matrixAB = Bool()
 
   // for TopDown Monitor (# TopDown)
   val reqSource = UInt(MemReqSource.reqSourceBits.W)

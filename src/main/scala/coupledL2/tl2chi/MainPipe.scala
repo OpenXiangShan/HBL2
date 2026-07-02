@@ -166,6 +166,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   val req_acquireBlock_s3       = sinkA_req_s3 && req_s3.opcode === AcquireBlock
   val req_prefetch_s3           = sinkA_req_s3 && req_s3.opcode === Hint
   val req_get_s3                = sinkA_req_s3 && req_s3.opcode === Get
+  val req_matrixABNoSnpGet_s3   = enableMatrixABNoSnpGet.B && req_get_s3 && req_s3.matrixAB
   val req_putfull_s3            = sinkA_req_s3 && req_s3.opcode === PutFullData
   val req_cbo_clean_s3          = sinkA_req_s3 && req_s3.opcode === CBOClean
   val req_cbo_flush_s3          = sinkA_req_s3 && req_s3.opcode === CBOFlush && !cmoHitInvalid
@@ -255,7 +256,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     req_cbo_inval_s3 && (isValid(meta_s3.state))
   )
   val need_cmoresp_s3_a = cmo_cbo_s3
-  val need_compack_s3_a = !cmo_cbo_s3
+  val need_compack_s3_a = !cmo_cbo_s3 && !req_matrixABNoSnpGet_s3
 
   val need_mshr_s3_a = need_acquire_s3_a || need_probe_s3_a || cache_alias
   
@@ -573,7 +574,8 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     alias = Some(metaW_s3_a_alias),
     accessed = true.B,
     tagErr = meta_s3.tagErr,
-    dataErr = meta_s3.dataErr
+    dataErr = meta_s3.dataErr,
+    matrixAB = false.B
   )
   val metaW_s3_b = Mux(isSnpToN(req_s3.chiOpcode.get), MetaEntry(),
     MetaEntry(
@@ -583,7 +585,8 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
       alias = meta_s3.alias,
       accessed = meta_s3.accessed,
       tagErr = meta_s3.tagErr,
-      dataErr = meta_s3.dataErr
+      dataErr = meta_s3.dataErr,
+      matrixAB = meta_s3.matrixAB
     )
   )
   val metaW_s3_c = MetaEntry(
@@ -593,7 +596,8 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     alias = meta_s3.alias,
     accessed = meta_s3.accessed,
     tagErr = Mux(wen_c, req_s3.denied, meta_s3.tagErr),
-    dataErr = Mux(wen_c, req_s3.corrupt, meta_s3.dataErr) // update error when write DS
+    dataErr = Mux(wen_c, req_s3.corrupt, meta_s3.dataErr), // update error when write DS
+    matrixAB = meta_s3.matrixAB && !wen_c
   )
   // use merge_meta if mergeA
   val metaW_s3_mshr = WireInit(Mux(req_s3.mergeA, req_s3.aMergeTask.meta, req_s3.meta))

@@ -103,6 +103,7 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.wayMask := 0.U(cacheParams.ways.W)
     task.reqSource := a.user.lift(utility.ReqSourceKey).getOrElse(MemReqSource.NoWhere.id.U)
     task.replTask := false.B
+    task.matrixAB := a.opcode === Get && MatrixInfo.isAB(matrixKey)
     task.matrixTask.foreach(_ := MatrixInfo.isMatrix(matrixKey))
     task.ameChannel.foreach(_ := a.user.lift(AmeChannelKey).getOrElse("b1000".U))
     task.ameIndex.foreach(_ := a.user.lift(AmeIndexKey).getOrElse(0.U))
@@ -147,6 +148,7 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.wayMask := 0.U(cacheParams.ways.W)
     task.reqSource := req.pfSource
     task.replTask := false.B
+    task.matrixAB := false.B
     task.matrixTask.foreach(_ := false.B)
     task.ameChannel.foreach(_ := 0.U)
     task.ameIndex.foreach(_ := 0.U)

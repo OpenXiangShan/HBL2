@@ -166,8 +166,9 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
   val req_get = req.opcode === Get
   val req_putfull = req.fromA && req.opcode === PutFullData
   val req_prefetch = req.opcode === Hint
+  val req_matrixABNoSnpGet = enableMatrixABNoSnpGet.B && req_get && req.matrixAB
 
-  val req_mayRepl = req_acquire || req_get || req_prefetch
+  val req_mayRepl = req_acquire || req_get || req_prefetch || req_putfull
 
   val req_chiOpcode = req.chiOpcode.get
 
@@ -387,6 +388,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
       req_cboClean                                       -> CleanShared,
       req_cboFlush                                       -> CleanInvalid,
       req_cboInval                                       -> MakeInvalid,
+      req_matrixABNoSnpGet                               -> ReadNoSnp,
       (req_acquirePerm || req_putfull)                   -> MakeUnique,
       req_needT                                          -> ReadUnique,
       req_needB /* Default */                            -> ReadNotSharedDirty
@@ -410,15 +412,15 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     oa.expCompAck := Mux(
       release_valid2,
       afterIssueEbOrElse(req_released_chiOpcode === WriteEvictOrEvict, false.B),
-      !cmo_cbo
+      !cmo_cbo && !req_matrixABNoSnpGet
     )
-    oa.memAttr := MemAttr(
+    oa.memAttr := Mux(req_matrixABNoSnpGet, MemAttr(), MemAttr(
       cacheable = true.B,
       allocate = !release_valid2 || !isEvict && !cmo_cbo,
       device = false.B,
       ewa = true.B
-    )
-    oa.snpAttr := true.B
+    ))
+    oa.snpAttr := !req_matrixABNoSnpGet
     oa.lpIDWithPadding := 0.U
     oa.excl := false.B
     oa.snoopMe := false.B
@@ -676,7 +678,8 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
       clients = meta.clients & Fill(clientBits, !snpToN),
       alias = meta.alias, //[Alias] Keep alias bits unchanged
       prefetch = !snpToN && meta_pft,
-      accessed = !snpToN && meta.accessed
+      accessed = !snpToN && meta.accessed,
+      matrixAB = !snpToN && !tagErr && meta.matrixAB
     )
     mp_probeack.metaWen := !req.snpHitReleaseToInval
     mp_probeack.tagWen := false.B
@@ -806,7 +809,8 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
       alias = Some(aliasFinal),
       prefetch = req_prefetch || dirResult.hit && meta_pft,
       pfsrc = PfSource.fromMemReqSource(req.reqSource),
-      accessed = req_putfull || req_acquire || req_get
+      accessed = req_putfull || req_acquire || req_get,
+      matrixAB = req_matrixABNoSnpGet
     )
     mp_grant.metaWen := !cmo_cbo && !denied
     mp_grant.tagWen := !cmo_cbo && !dirResult.hit && !denied
@@ -818,6 +822,9 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     mp_grant.wayMask := 0.U(cacheParams.ways.W)
     mp_grant.mshrRetry := !state.s_retry
     mp_grant.reqSource := 0.U(MemReqSource.reqSourceBits.W)
+    mp_grant.ameChannel.foreach(_ := req.ameChannel.getOrElse(0.U))
+    mp_grant.ameIndex.foreach(_ := req.ameIndex.getOrElse(0.U))
+    mp_grant.matrixTask.foreach(_ := req.matrixTask.getOrElse(false.B))
 
     // Add merge grant task for Acquire and late Prefetch
     mp_grant.mergeA := mergeA || io.aMergeTask.valid
@@ -1258,6 +1265,8 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
 
   // replay
   val replResp = io.replResp.bits
+  val replRespSilentMatrixAB = enableMatrixABNoSnpGet.B &&
+    replResp.meta.matrixAB && !replResp.meta.dirty && !replResp.meta.clients.orR
   when (io.replResp.valid && replResp.retry) {
     state.s_refill := false.B
     state.s_retry := false.B
@@ -1280,7 +1289,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     // 2. the same way, just release as normal (only now we set s_release)
     // 3. differet way, we need to update meta and release that way
     // if meta has client, rprobe client
-    when (replResp.meta.state =/= INVALID) {
+    when (replResp.meta.state =/= INVALID && !replRespSilentMatrixAB) {
       // set release flags
       state.s_release := false.B
       state.w_releaseack := false.B
