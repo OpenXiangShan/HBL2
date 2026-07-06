@@ -166,7 +166,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
   val req_acquireBlock_s3       = sinkA_req_s3 && req_s3.opcode === AcquireBlock
   val req_prefetch_s3           = sinkA_req_s3 && req_s3.opcode === Hint
   val req_get_s3                = sinkA_req_s3 && req_s3.opcode === Get
-  val req_matrixABNoSnpGet_s3   = enableMatrixABNoSnpGet.B && req_get_s3 && req_s3.matrixAB
+  val req_matrixABReadOnceGet_s3 = enableMatrixABReadOnceGet.B && req_get_s3 && req_s3.matrixAB
   val req_putfull_s3            = sinkA_req_s3 && req_s3.opcode === PutFullData
   val req_cbo_clean_s3          = sinkA_req_s3 && req_s3.opcode === CBOClean
   val req_cbo_flush_s3          = sinkA_req_s3 && req_s3.opcode === CBOFlush && !cmoHitInvalid
@@ -256,7 +256,7 @@ class MainPipe(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes
     req_cbo_inval_s3 && (isValid(meta_s3.state))
   )
   val need_cmoresp_s3_a = cmo_cbo_s3
-  val need_compack_s3_a = !cmo_cbo_s3 && !req_matrixABNoSnpGet_s3
+  val need_compack_s3_a = !cmo_cbo_s3 && !req_matrixABReadOnceGet_s3
 
   val need_mshr_s3_a = need_acquire_s3_a || need_probe_s3_a || cache_alias
   

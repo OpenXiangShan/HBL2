@@ -166,7 +166,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
   val req_get = req.opcode === Get
   val req_putfull = req.fromA && req.opcode === PutFullData
   val req_prefetch = req.opcode === Hint
-  val req_matrixABNoSnpGet = enableMatrixABNoSnpGet.B && req_get && req.matrixAB
+  val req_matrixABReadOnceGet = enableMatrixABReadOnceGet.B && req_get && req.matrixAB
 
   val req_mayRepl = req_acquire || req_get || req_prefetch || req_putfull
 
@@ -382,13 +382,14 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
       *  AcquirePerm BtoT     |  MakeUnique
       *  PrefetchRead         |  ReadNotSharedDirty
       *  PrefetchWrite        |  ReadUnique
+      *  Matrix A/B Get       |  ReadOnce
       */
     oa.opcode := ParallelPriorityMux(Seq(
       release_valid2                                     -> req_released_chiOpcode,
       req_cboClean                                       -> CleanShared,
       req_cboFlush                                       -> CleanInvalid,
       req_cboInval                                       -> MakeInvalid,
-      req_matrixABNoSnpGet                               -> ReadNoSnp,
+      req_matrixABReadOnceGet                            -> ReadOnce,
       (req_acquirePerm || req_putfull)                   -> MakeUnique,
       req_needT                                          -> ReadUnique,
       req_needB /* Default */                            -> ReadNotSharedDirty
@@ -412,15 +413,20 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
     oa.expCompAck := Mux(
       release_valid2,
       afterIssueEbOrElse(req_released_chiOpcode === WriteEvictOrEvict, false.B),
-      !cmo_cbo && !req_matrixABNoSnpGet
+      !cmo_cbo && !req_matrixABReadOnceGet
     )
-    oa.memAttr := Mux(req_matrixABNoSnpGet, MemAttr(), MemAttr(
+    oa.memAttr := Mux(req_matrixABReadOnceGet, MemAttr(
+      cacheable = true.B,
+      allocate = true.B,
+      device = false.B,
+      ewa = true.B
+    ), MemAttr(
       cacheable = true.B,
       allocate = !release_valid2 || !isEvict && !cmo_cbo,
       device = false.B,
       ewa = true.B
     ))
-    oa.snpAttr := !req_matrixABNoSnpGet
+    oa.snpAttr := true.B
     oa.lpIDWithPadding := 0.U
     oa.excl := false.B
     oa.snoopMe := false.B
@@ -810,7 +816,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
       prefetch = req_prefetch || dirResult.hit && meta_pft,
       pfsrc = PfSource.fromMemReqSource(req.reqSource),
       accessed = req_putfull || req_acquire || req_get,
-      matrixAB = req_matrixABNoSnpGet
+      matrixAB = req_matrixABReadOnceGet
     )
     mp_grant.metaWen := !cmo_cbo && !denied
     mp_grant.tagWen := !cmo_cbo && !dirResult.hit && !denied
@@ -1265,7 +1271,7 @@ class MSHR(implicit p: Parameters) extends TL2CHIL2Module with HasCHIOpcodes {
 
   // replay
   val replResp = io.replResp.bits
-  val replRespSilentMatrixAB = enableMatrixABNoSnpGet.B &&
+  val replRespSilentMatrixAB = enableMatrixABReadOnceGet.B &&
     replResp.meta.matrixAB && !replResp.meta.dirty && !replResp.meta.clients.orR
   when (io.replResp.valid && replResp.retry) {
     state.s_refill := false.B

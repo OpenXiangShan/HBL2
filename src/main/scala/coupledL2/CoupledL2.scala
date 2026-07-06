@@ -42,7 +42,7 @@ trait HasCoupledL2Parameters {
   def enableClockGate = p(EnableL2ClockGate)
   def cacheParams = p(L2ParamKey)
   def enableMatrix = p(EnableMatrix)
-  def enableMatrixABNoSnpGet = p(EnableMatrixABNoSnpGet)
+  def enableMatrixABReadOnceGet = p(EnableMatrixABReadOnceGet)
   def PrivateClintRange = cacheParams.PrivateClintRange
 
   def XLEN = 64
